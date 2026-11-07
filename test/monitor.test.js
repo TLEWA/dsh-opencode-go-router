@@ -262,6 +262,26 @@ test('system prompt rewrite rotates with slow samples despite a healthy fold cac
   assert.equal(monitor.rotations, 1);
 });
 
+test('system prompt rewrite can rotate before any fold is seen', async (t) => {
+  const { store, monitor } = setup(t);
+  badSamples(store);
+
+  const first = monitor.observeSystemPrompt('system A');
+  assert.equal(first.changed, false);
+  assert.equal(monitor.status().baselineReady, false);
+  assert.equal(monitor.status().lastFoldSeq, null);
+
+  const changed = monitor.observeSystemPrompt('system B');
+  assert.equal(changed.changed, true);
+  const route = monitor.rotateForSystemRewrite();
+  assert.ok(route);
+  assert.equal(route.reason, 'system-rewrite');
+  assert.equal(route.foldSeq, null);
+  assert.equal(store.routeFor(sessionId).reason, 'system-rewrite');
+  assert.equal(monitor.rotations, 1);
+  assert.equal(monitor.status().baselineReady, false);
+});
+
 test('system prompt rewrite does not rotate when samples are fast', async (t) => {
   const { store, monitor, writeState, tick } = setup(t);
   writeState([{ seq: 1, hPct: 90, at: 1 }]);
