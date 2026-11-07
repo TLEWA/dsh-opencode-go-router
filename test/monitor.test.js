@@ -109,6 +109,31 @@ test('next fold rotates when the previous fold lost cache and samples are slow',
   assert.equal(route.avgTtftMs, 25000);
   assert.equal(route.avgTps, 10);
   assert.equal(monitor.rotations, 1);
+  let history = store.history();
+  assert.equal(history.length, 1);
+  assert.equal(history[0].sessionId, sessionId);
+  assert.equal(history[0].reason, 'cache-and-performance');
+  assert.equal(history[0].foldSeq, 2);
+  assert.equal(history[0].beforeTtftMs, 25000);
+  assert.equal(history[0].beforeTps, 10);
+  assert.equal(history[0].beforeSamples, 5);
+  assert.equal(history[0].afterSamples, 0);
+  for (let i = 0; i < 5; i += 1) {
+    store.recordSample(sessionId, {
+      ttftMs: 2000 + i * 100,
+      tps: 200 + i,
+      outputTokens: 100,
+      at: 2000000 + i,
+    }, 20);
+  }
+  history = store.history();
+  assert.equal(history[0].afterSamples, 5);
+  assert.equal(history[0].afterTtftMs, 2200);
+  assert.equal(history[0].afterTps, 202);
+  assert.equal(history[0].afterComplete, true);
+  // Restore slow samples for the later fold so this test still exercises a
+  // second rotation; the first history window is already frozen.
+  badSamples(store);
   // billion-context keeps one state file per DSH session; the rotated header
   // does not open a new state file. The monitor must keep watching this file.
   assert.equal(monitor.status().baselineReady, true);

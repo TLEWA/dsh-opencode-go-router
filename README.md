@@ -100,8 +100,9 @@ Because the plugin entry point reloads `lib/impl.js` with a cache-busting query 
 
 ## Status route
 
-`GET /opencode-router/status` returns JSON with the effective config, persisted routes, and per-session monitor state:
+`GET /opencode-router/status` returns JSON with the effective config, persisted routes, rotation history, and per-session monitor state:
 
+- `history` — recent silent switches, newest first, with `sessionId`, `at`, `reason`, `foldSeq`, `cacheHitPct`, the routing `value`, before/after TTFT and throughput, sample progress, and a `backfilled` marker;
 - `eligibility` — the configured providers and the fixed `deepseek` model prefix;
 - `baselineReady` and `lastFoldSeq` — fold cursor;
 - `latestFold` — latest fold record (including `hPct`);
@@ -116,9 +117,17 @@ Because the plugin entry point reloads `lib/impl.js` with a cache-busting query 
 
 The route is localhost-only when the host's web server is bound to localhost. Treat the JSON as diagnostics.
 
+## Settings page
+
+In the DSH Web client, open the plugin manager and select this bundle. Its detail page renders a **Silent switch performance log** above the bundle configuration rows.
+
+For each silent switch it shows the time, a short session id, the trigger (`Fold + speed` or `System rewrite`), the fold number and cache hit behind the decision, average TTFT and throughput before the switch, the first `sampleSize` eligible samples after it, and the percentage change. Rows refresh every five seconds from `GET /opencode-router/status`. The after window is frozen once it has `sampleSize` samples, so later traffic does not rewrite history.
+
+Routes created before 0.2.0 are backfilled as one row per still-known route and marked `Reconstructed`; their after values come from samples retained after that rotation. The panel lives in the Web client and does not affect host routing.
+
 ## Privacy and safety
 
-- Stored data is limited to DSH session ids, generated routing ids, fold numbers, cache percentages, TTFT, throughput, and timestamps. No prompts, messages, tool output, or API keys are stored.
+- Stored data is limited to DSH session ids, generated routing ids, fold numbers, cache percentages, TTFT, throughput, rotation history, and timestamps. No prompts, messages, tool output, or API keys are stored.
 - Every host callback catches its own errors. A missing or malformed billion-context state file only produces a log entry.
 - Rotating a header is a routing hint, not a guarantee that the gateway picks a different physical backend. If the gateway ignores unknown or new session values, the plugin cannot force a move.
 - billion-context's state file is an internal format. If its layout changes, the monitor may see no folds and stay idle; the plugin will not corrupt anything.
@@ -129,7 +138,7 @@ The route is localhost-only when the host's web server is bound to localhost. Tr
 node --test
 ```
 
-The suite covers fold parsing, the cache/performance decision, system-prompt extraction/fingerprinting, the system-rewrite decision, DeepSeek-only eligibility, state persistence, the monitor state machine, header routing, and stream measurement.
+The suite covers fold parsing, the cache/performance decision, system-prompt extraction/fingerprinting, the system-rewrite decision, DeepSeek-only eligibility, state persistence, rotation history, the monitor state machine, header routing, stream measurement, and the client bundle registration.
 
 ## License
 

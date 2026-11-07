@@ -100,8 +100,9 @@ dsh plugin add dsh-opencode-go-router --profile <profile>
 
 ## 状态路由
 
-`GET /opencode-router/status` 返回 JSON：生效配置、已持久化路由、每个会话的监控状态：
+`GET /opencode-router/status` 返回 JSON：生效配置、已持久化路由、轮换性能记录、每个会话的监控状态：
 
+- `history` —— 最近的静默切换记录，最新在前，字段包括 `sessionId`、`at`、`reason`、`foldSeq`、`cacheHitPct`、路由 `value`、切换前后 TTFT/吞吐、样本进度和 `backfilled` 标记；
 - `eligibility` —— 配置的 provider 与固定的 `deepseek` 模型前缀；
 - `baselineReady` 与 `lastFoldSeq` —— 折叠游标；
 - `latestFold` —— 最新折叠记录（含 `hPct`）；
@@ -116,9 +117,17 @@ dsh plugin add dsh-opencode-go-router --profile <profile>
 
 如果宿主 Web 服务只监听 localhost，该路由也只在 localhost 可达。JSON 仅供诊断。
 
+## 设置页
+
+在 DSH Web 客户端打开插件管理器，选中本插件。详情页会在 bundle 配置行上方显示 **静默切换性能记录**。
+
+每条记录展示切换时间、短会话 id、触发原因（`折叠 + 性能` 或 `系统提示词改写`）、触发时的折叠序号与缓存命中率、切换前的平均 TTFT/吞吐、切换后首批 `sampleSize` 条合格样本，以及变化百分比。数据来自 `GET /opencode-router/status`，每五秒刷新一次。切换后的采样窗口凑满 `sampleSize` 条后即冻结，之后的流量不会改写历史。
+
+0.2.0 之前已经写入的路由会按“每个仍保留的路由一行”补录，并标记为 `补录`；其切换后数值来自该次轮换之后仍保留的样本。面板只存在于 Web 客户端，不影响宿主侧路由。
+
 ## 隐私与安全
 
-- 只保存 DSH 会话 id、生成的路由 id、折叠序号、缓存百分比、TTFT、吞吐和时间戳；不保存提示词、消息、工具输出或 API key。
+- 只保存 DSH 会话 id、生成的路由 id、折叠序号、缓存百分比、TTFT、吞吐、轮换性能记录和时间戳；不保存提示词、消息、工具输出或 API key。
 - 所有宿主回调都自行捕获异常。billion-context 状态文件缺失或损坏只会产生日志。
 - 轮换请求头只是路由提示，不保证网关一定换到另一台物理后端。如果网关忽略新的会话值，插件无法强制迁移。
 - billion-context 的状态文件是内部格式。若其结构变化，监控器可能看不到折叠并保持空闲，但不会破坏任何数据。
@@ -129,7 +138,7 @@ dsh plugin add dsh-opencode-go-router --profile <profile>
 node --test
 ```
 
-测试覆盖折叠解析、缓存/性能判定、系统提示词提取与指纹、系统提示词改写判定、仅 DeepSeek 资格、状态持久化、监控状态机、请求头路由和流式耗时测量。
+测试覆盖折叠解析、缓存/性能判定、系统提示词提取与指纹、系统提示词改写判定、仅 DeepSeek 资格、状态持久化、轮换性能记录、监控状态机、请求头路由、流式耗时测量和客户端 bundle 注册。
 
 ## 许可证
 

@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. Versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-11-08
+
+### Added
+
+- Persists one performance record per silent switch: the slow trigger samples plus the average TTFT and throughput of the first `sampleSize` requests after the switch. The window freezes once full.
+- Adds a settings-page performance panel in the DSH Web host showing before/after speed, percentage change, and sampling progress, refreshed every five seconds.
+- Exposes a top-level `history` array from the status route; routes written by older versions are backfilled as `backfilled` rows.
+- Adds the client bundle (`dsh.client`) and a registration test.
+
 ## [0.1.6] - 2026-11-08
 
 ### Fixed

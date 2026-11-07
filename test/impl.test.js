@@ -203,6 +203,10 @@ test('mount wires request headers and stream hooks through a fake cordis context
   assert.equal(liveStatus.routing.lastAppliedSessionId, 's1');
   assert.equal(liveStatus.routing.lastAppliedValue, 'ses_mounted');
   assert.equal(liveStatus.eligibility.modelPrefix, 'deepseek');
+  assert.equal(Array.isArray(liveStatus.history), true);
+  assert.equal(liveStatus.history.length, 1);
+  assert.equal(liveStatus.history[0].backfilled, true);
+  assert.equal(liveStatus.history[0].value, 'ses_mounted');
   assert.equal(liveStatus.sessions.find((session) => session.sessionId === 's1').targetActive, true);
 
   const nonTargetHeaders = new Headers({ 'x-opencode-session': 'ses_original' });

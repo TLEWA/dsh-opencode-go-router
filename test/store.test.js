@@ -49,6 +49,85 @@ test('RouterStore persists routes and samples', async (t) => {
   assert.equal(reloaded.samplesFor('session-1')[0].tps, 42.5);
 });
 
+test('RouterStore records rotation history and freezes the after window', async (t) => {
+  const dir = tempDir(t);
+  const statePath = path.join(dir, 'state.json');
+  const store = new RouterStore({ statePath, logger: quiet, debounceMs: 0, sampleSize: 5 });
+  store.addRotation({
+    sessionId: 'session-1',
+    at: 1000,
+    value: 'ses_new',
+    reason: 'cache-and-performance',
+    foldSeq: 3,
+    cacheHitPct: 0,
+    beforeTtftMs: 25000,
+    beforeTps: 10,
+    beforeSamples: 5,
+    afterTarget: 5,
+  });
+  let rows = store.history();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, 'session-1@1000');
+  assert.equal(rows[0].beforeTtftMs, 25000);
+  assert.equal(rows[0].afterSamples, 0);
+  assert.equal(rows[0].afterComplete, false);
+
+  for (let i = 0; i < 5; i += 1) {
+    store.recordSample('session-1', {
+      ttftMs: 1000 + i * 100,
+      tps: 100 + i,
+      outputTokens: 100,
+      at: 2000 + i,
+    });
+  }
+  rows = store.history();
+  assert.equal(rows[0].afterSamples, 5);
+  assert.equal(rows[0].afterTtftMs, 1200);
+  assert.equal(rows[0].afterTps, 102);
+  assert.equal(rows[0].afterComplete, true);
+
+  store.recordSample('session-1', { ttftMs: 9999, tps: 9999, outputTokens: 100, at: 3000 });
+  assert.equal(store.history()[0].afterTtftMs, 1200);
+
+  await store.flush();
+  const reloaded = new RouterStore({ statePath, logger: quiet, debounceMs: 0, sampleSize: 5 });
+  assert.equal(reloaded.history()[0].afterTtftMs, 1200);
+});
+
+test('RouterStore seeds history from existing routes', async (t) => {
+  const dir = tempDir(t);
+  const statePath = path.join(dir, 'state.json');
+  fs.writeFileSync(statePath, JSON.stringify({
+    version: 1,
+    updatedAt: 1,
+    routes: {
+      'session-old': {
+        value: 'ses_old',
+        rotatedAt: 1000,
+        foldSeq: 7,
+        reason: 'cache-and-performance',
+        cacheHitPct: 0,
+        avgTtftMs: 28000,
+        avgTps: 80,
+      },
+    },
+    metrics: {
+      'session-old': [
+        { ttftMs: 2500, tps: 200, outputTokens: 100, at: 2000 },
+        { ttftMs: 3000, tps: 220, outputTokens: 100, at: 3000 },
+      ],
+    },
+  }), 'utf8');
+  const store = new RouterStore({ statePath, logger: quiet, debounceMs: 0, sampleSize: 5 });
+  const rows = store.history();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].value, 'ses_old');
+  assert.equal(rows[0].backfilled, true);
+  assert.equal(rows[0].beforeTtftMs, 28000);
+  assert.equal(rows[0].afterSamples, 2);
+  assert.equal(rows[0].afterTtftMs, 2750);
+});
+
 test('RouterStore trims samples and backs up corrupt state', async (t) => {
   const dir = tempDir(t);
   const statePath = path.join(dir, 'state.json');
