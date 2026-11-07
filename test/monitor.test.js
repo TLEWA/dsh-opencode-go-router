@@ -107,15 +107,58 @@ test('next fold rotates when the previous fold lost cache and samples are slow',
   assert.equal(route.avgTtftMs, 25000);
   assert.equal(route.avgTps, 10);
   assert.equal(monitor.rotations, 1);
-  assert.equal(monitor.status().lastFoldSeq, 2);
+  // The monitor immediately follows the new conversation: the old state file
+  // is no longer the source of truth and the baseline is re-armed.
+  assert.equal(monitor.status().baselineReady, false);
+  assert.equal(monitor.status().lastFoldSeq, null);
+  assert.equal(monitor.status().watchingId, route.value);
 
   await tick();
   assert.equal(monitor.rotations, 1);
 
+  // The old file must be ignored after the rotation, not used to rotate again.
   writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 80, at: 2 }, { seq: 3, hPct: 90, at: 3 }]);
   await tick();
   assert.equal(monitor.rotations, 1);
   assert.equal(store.routeFor(sessionId).value, route.value);
+});
+
+test('after rotation the monitor follows the new conversation state file', async (t) => {
+  const { config, store, monitor, writeState, tick } = setup(t);
+  writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await tick();
+  badSamples(store);
+  writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 80, at: 2 }]);
+  await tick();
+  const first = store.routeFor(sessionId);
+  assert.ok(first);
+  assert.equal(monitor.rotations, 1);
+
+  // billion-context names its state file after the upstream conversation id,
+  // so a rotation means a brand new file keyed by the routing id.
+  const nextFile = biliStatePathCandidates(first.value, config)[0];
+  fs.mkdirSync(path.dirname(nextFile), { recursive: true });
+  let pad = 0;
+  const writeNext = (folds) => {
+    pad += 1;
+    fs.writeFileSync(nextFile, JSON.stringify({
+      payload: { metadata: { cacheLedger: { folds, pad: 'y'.repeat(pad) } } },
+    }), 'utf8');
+  };
+
+  writeNext([{ seq: 1, hPct: 0, at: 10 }]);
+  await tick();
+  assert.equal(monitor.status().stateFile, nextFile);
+  assert.equal(monitor.status().baselineReady, true);
+  assert.equal(monitor.status().lastFoldSeq, 1);
+
+  // A later fold on the new conversation can rotate again.
+  writeNext([{ seq: 1, hPct: 0, at: 10 }, { seq: 2, hPct: 60, at: 20 }]);
+  await tick();
+  assert.equal(monitor.rotations, 2);
+  const second = store.routeFor(sessionId);
+  assert.ok(second);
+  assert.notEqual(second.value, first.value);
 });
 
 test('good cache hit prevents rotation', async (t) => {

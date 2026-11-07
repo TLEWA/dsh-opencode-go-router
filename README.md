@@ -12,13 +12,15 @@ The plugin does not compress anything itself and does not change the prompt or t
 
 ## How it works
 
-- **Cache evidence.** It reads billion-context's per-session state file (`sessions/openai/<host>_<sha256(sessionId).slice(0,24)>.json`) and looks at `metadata.cacheLedger.folds`. A fold record's `hPct` is the cache-hit percentage of the first request sent after that rebuild.
+- **Cache evidence.** It reads billion-context's per-session state file (`sessions/openai/<host>_<sha256(conversationId).slice(0,24)>.json`) and looks at `metadata.cacheLedger.folds`. Before any rotation `conversationId` is the DSH session id; after one it is the generated `ses_...` value, because billion-context then starts a new conversation. A fold record's `hPct` is the cache-hit percentage of the first request sent after that rebuild.
 - **Performance evidence.** It wraps `llm/stream`, timestamps the first content chunk, and records output tokens per second at the finish chunk. It keeps the last `sampleSize` valid samples per DSH session.
 - **Decision.** On a new fold, it evaluates the folds *before* that fold. Rotation happens only when the latest `foldsWindow` fold(s) all have `hPct <= cacheHitThresholdPct` **and** the recent samples are slow (average TTFT `>=` threshold, or average throughput `<=` threshold).
-- **Routing.** A persisted route maps the DSH session id to a generated `ses_...` value. The `llm-pi-ai/request-headers` waterfall sets `x-opencode-session` to that value. pi-ai only adds its own value when the header is absent, so this wins.
+- **Routing.** A persisted route maps the DSH session id to a generated `ses_...` value. The `llm-pi-ai/request-headers` waterfall runs after pi-ai assembles its header set and before the request is sent, so setting `x-opencode-session` there reaches the wire. In the reference setup a companion injector such as `dsh-opencode-ip-guard` supplies a baseline value equal to the DSH session id; when a route exists this plugin replaces it, and the injector's no-overwrite fallback leaves the value alone.
 - **No billion-context, no effect.** If the sessions directory or the session state file is absent, the monitor stays idle. The header hook has no route and does nothing. No exception is thrown into DSH.
 
 The first fold seen after a plugin start is a baseline and never causes rotation. Rotation happens on a later fold, matching "at the next fold rebuild".
+
+A rotation changes the upstream conversation id, so billion-context opens a new state file for the same DSH session. The monitor immediately re-targets to that file and takes a fresh baseline, which lets later folds rotate again instead of watching a conversation that is no longer in use.
 
 ## Requirements
 
@@ -80,6 +82,7 @@ Because the plugin entry point reloads `lib/impl.js` with a cache-busting query 
 
 - `baselineReady` and `lastFoldSeq` — fold cursor;
 - `latestFold` — latest fold record (including `hPct`);
+- `watchingId` — upstream conversation id of the state file being followed;
 - `route` — current rotated routing id, or `null`;
 - `samples` — count, average TTFT, average throughput;
 - `rotations`, `lastRequestAt`, `lastTickAt`, `lastError`.

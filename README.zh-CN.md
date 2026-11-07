@@ -12,13 +12,15 @@ OpenCode Go 通过请求头 `x-opencode-session` 把一条会话固定到一个�
 
 ## 工作方式
 
-- **缓存证据。** 读取 billion-context 的会话状态文件（`sessions/openai/<host>_<sha256(sessionId).slice(0,24)>.json`）里的 `metadata.cacheLedger.folds`。每条折叠记录的 `hPct` 就是该次压缩重建后第一条请求的缓存命中率。
+- **缓存证据。** 读取 billion-context 的会话状态文件（`sessions/openai/<host>_<sha256(conversationId).slice(0,24)>.json`）里的 `metadata.cacheLedger.folds`。轮换之前 `conversationId` 是 DSH 会话 id；轮换之后是生成的 `ses_...` 值，因为 billion-context 会把它当作一条新会话。每条折叠记录的 `hPct` 就是该次压缩重建后第一条请求的缓存命中率。
 - **性能证据。** 包裹 `llm/stream`，记录首个内容 chunk 的时间，并在 finish chunk 计算输出 tok/s；每个 DSH 会话保留最近 `sampleSize` 条有效样本。
 - **判定。** 出现新折叠时，只评估**这次新折叠之前**的折叠。最近 `foldsWindow` 次折叠的 `hPct` 都 `<=` 阈值，**并且**最近样本的平均 TTFT `>=` 阈值或平均吞吐 `<=` 阈值，才轮换。
-- **路由。** 持久化 "DSH 会话 id -> 生成的 `ses_...` 值" 的映射；`llm-pi-ai/request-headers` 瀑布把 `x-opencode-session` 设为该值。pi-ai 只在请求头不存在时才补自己的值，所以我们的值会生效。
+- **路由。** 持久化 "DSH 会话 id -> 生成的 `ses_...` 值" 的映射；`llm-pi-ai/request-headers` 瀑布在 pi-ai 组装完请求头之后、真正发请求之前执行，所以在这里设置 `x-opencode-session` 能到达线上请求。参考配置里由伴生插件（如 `dsh-opencode-ip-guard`）提供兜底值（等于 DSH 会话 id）；有路由时本插件覆盖它，伴生插件的"已有头不覆盖"规则则保证原值不被二次改动。
 - **没有 billion-context 也能安全存在。** 找不到 sessions 目录或会话状态文件时，监控器保持空闲；请求头钩子没有可用路由时什么也不做；不会向 DSH 抛异常。
 
 插件启动后看到的第一次折叠只作为基线，绝不触发轮换；轮换发生在之后的折叠，符合"在下一次折叠重建时轮换"。
+
+轮换会改变上游会话 id，billion-context 会为同一个 DSH 会话新开一个状态文件。监控器会立即切换到新文件并重新取基线，这样后续折叠仍能再次触发轮换，而不会一直盯着已废弃的会话。
 
 ## 依赖
 
@@ -80,6 +82,7 @@ OpenCode Go 通过请求头 `x-opencode-session` 把一条会话固定到一个�
 
 - `baselineReady` 与 `lastFoldSeq` —— 折叠游标；
 - `latestFold` —— 最新折叠记录（含 `hPct`）；
+- `watchingId` —— 当前跟踪的状态文件对应的上游会话 id；
 - `route` —— 当前轮换后的路由 id，或 `null`；
 - `samples` —— 样本数、平均 TTFT、平均吞吐；
 - `rotations`、`lastRequestAt`、`lastTickAt`、`lastError`。
