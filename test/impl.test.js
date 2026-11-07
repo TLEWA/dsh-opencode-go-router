@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeConfig } from '../lib/core.js';
-import { applyRoutingHeader, measureStream, mount, routingForRequest } from '../lib/impl.js';
+import { applyRoutingHeader, applyRoutingHeaderDetailed, measureStream, mount, routingForRequest } from '../lib/impl.js';
 
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -42,6 +42,28 @@ test('applyRoutingHeader sets and preserves the header as configured', () => {
   const otherProvider = new Headers();
   assert.equal(applyRoutingHeader({ provider: 'other', sessionId: 's1' }, otherProvider, config, fakeStore()), false);
   assert.equal(otherProvider.get('x-opencode-session'), null);
+});
+
+test('applyRoutingHeaderDetailed reports why a header was or was not set', () => {
+  const config = normalizeConfig({});
+  const request = { provider: 'opencode-go', model: 'deepseek-v4.1-flash', sessionId: 's1' };
+  const headers = new Headers();
+  const applied = applyRoutingHeaderDetailed(request, headers, config, fakeStore());
+  assert.equal(applied.applied, true);
+  assert.equal(applied.reason, 'applied');
+  assert.equal(applied.route.value, 'ses_rotated');
+  assert.equal(headers.get('x-opencode-session'), 'ses_rotated');
+
+  const noRoute = applyRoutingHeaderDetailed({ provider: 'other', sessionId: 's1' }, new Headers(), config, fakeStore());
+  assert.equal(noRoute.applied, false);
+  assert.equal(noRoute.reason, 'no-route');
+
+  const preserve = normalizeConfig({ overrideExistingHeader: false });
+  const existing = new Headers({ 'x-opencode-session': 'ses_original' });
+  const kept = applyRoutingHeaderDetailed(request, existing, preserve, fakeStore());
+  assert.equal(kept.applied, false);
+  assert.equal(kept.reason, 'existing-header');
+  assert.equal(existing.get('x-opencode-session'), 'ses_original');
 });
 
 test('measureStream records TTFT, throughput and finish', async () => {
@@ -160,6 +182,11 @@ test('mount wires request headers and stream hooks through a fake cordis context
   );
   assert.equal(returned, headers);
   assert.equal(headers.get('x-opencode-session'), 'ses_mounted');
+  const liveStatus = globalThis.__opencodeRouter.status();
+  assert.equal(liveStatus.routing.checks, 1);
+  assert.equal(liveStatus.routing.applications, 1);
+  assert.equal(liveStatus.routing.lastAppliedSessionId, 's1');
+  assert.equal(liveStatus.routing.lastAppliedValue, 'ses_mounted');
 
   const onStream = listeners.get('llm/stream');
   assert.equal(typeof onStream, 'function');
