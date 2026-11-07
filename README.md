@@ -47,7 +47,7 @@ To change defaults, add an override by row id to the profile's `cordis.patch.yml
     cacheHitThresholdPct: 25
 ```
 
-Because the plugin entry point reloads `lib/impl.js` with a cache-busting query on every `apply`, editing the implementation and touching the plugin config is usually enough to try new code. Changes to `lib/core.js`, `lib/store.js`, or `lib/monitor.js` still need a full DSH restart, because those imports are cached by Node.
+Because the plugin entry point reloads `lib/impl.js` with a cache-busting query on every `apply`, editing the implementation and touching the plugin config is usually enough to try new code. In a running host, toggling the profile bundle off and on through the plugin manager also reloads the static imports (`lib/core.js`, `lib/store.js`, `lib/monitor.js`); the 0.1.2 -> 0.1.3 threshold change was verified that way. If the host keeps reporting the old version, restart DSH.
 
 ## Configuration
 

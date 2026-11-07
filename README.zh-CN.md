@@ -47,7 +47,7 @@ OpenCode Go 通过请求头 `x-opencode-session` 把一条会话固定到一个�
     cacheHitThresholdPct: 25
 ```
 
-插件入口在每次 `apply` 时用带时间戳的查询串重新加载 `lib/impl.js`，所以改实现并碰一下插件配置通常就能生效；但 `lib/core.js`、`lib/store.js`、`lib/monitor.js` 的改动仍需要完整重启 DSH（Node 会缓存这些静态 import）。
+插件入口在每次 `apply` 时用带时间戳的查询串重新加载 `lib/impl.js`，所以改实现并碰一下插件配置通常就能生效。运行中的宿主里，用插件管理器把 profile bundle 关掉再打开，也会重新加载静态 import（`lib/core.js`、`lib/store.js`、`lib/monitor.js`）；0.1.2 -> 0.1.3 的阈值改动就是这样验证生效的。如果状态仍显示旧版本，再完整重启 DSH。
 
 ## 配置项
 
