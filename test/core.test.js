@@ -17,6 +17,8 @@ import {
   normalizeFolds,
   performanceCondition,
   summarizeSamples,
+  systemPromptFingerprint,
+  systemPromptText,
 } from '../lib/core.js';
 
 test('normalizeConfig applies defaults and clamps', () => {
@@ -32,6 +34,8 @@ test('normalizeConfig applies defaults and clamps', () => {
   assert.equal(config.cacheHitThresholdPct, 100);
   assert.equal(config.sampleSize, 1);
   assert.equal(normalizeConfig({}).ttftThresholdMs, 12000);
+  assert.equal(normalizeConfig({}).systemRewriteBypassCache, true);
+  assert.equal(normalizeConfig({ systemRewriteBypassCache: false }).systemRewriteBypassCache, false);
   assert.deepEqual(config.requestCheckDelaysMs, [10, 20]);
   assert.equal(config.statePath.endsWith(path.join('storages', 'opencode-router', 'state.json')), true);
 });
@@ -52,6 +56,27 @@ test('isTargetRequest only accepts OpenCode Go DeepSeek-series models', () => {
   assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'deepseek-v4.1-flash' }, exact), true);
   assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'deepseek-chat' }, exact), false);
   assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'claude-haiku-5-5' }, exact), false);
+});
+
+test('systemPromptText mirrors pi-ai leading system messages and fingerprints them', () => {
+  assert.equal(systemPromptText(null), '');
+  assert.equal(systemPromptText({}), '');
+  assert.equal(systemPromptText({ system: 'base' }), 'base');
+  const options = {
+    system: 'base',
+    messages: [
+      { role: 'system', content: [{ type: 'text', text: 'first' }, { type: 'text', text: '-' }, { type: 'text', text: 'second' }] },
+      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      { role: 'system', content: [{ type: 'text', text: 'late system must be ignored' }] },
+    ],
+  };
+  assert.equal(systemPromptText(options), 'base\n\nfirst-second');
+  assert.equal(systemPromptText({ messages: [{ role: 'system', content: 'string form' }] }), 'string form');
+
+  const a = systemPromptFingerprint('base');
+  assert.equal(a, systemPromptFingerprint('base'));
+  assert.match(a, /^[0-9a-f]{16}$/);
+  assert.notEqual(a, systemPromptFingerprint('base '));
 });
 
 test('bili session key and state path follow billion-context naming', () => {

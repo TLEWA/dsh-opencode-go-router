@@ -10,7 +10,7 @@ import { RouterStore } from '../lib/store.js';
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 const sessionId = 'session-monitor-test';
 
-function setup(t) {
+function setup(t, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-router-monitor-'));
   const biliRoot = path.join(dir, 'bili');
   const config = normalizeConfig({
@@ -26,6 +26,7 @@ function setup(t) {
     ttftThresholdMs: 20000,
     throughputThresholdTps: 60,
     debug: false,
+    ...overrides,
   });
   const store = new RouterStore({ statePath: config.statePath, logger: quiet, debounceMs: 0 });
   let clock = 1000000;
@@ -226,6 +227,71 @@ test('missing state file is harmless', async (t) => {
   await monitor.tick();
   assert.equal(monitor.status().baselineReady, false);
   assert.equal(monitor.rotations, 0);
+});
+
+test('system prompt rewrite rotates with slow samples despite a healthy fold cache', async (t) => {
+  const { store, monitor, writeState, tick } = setup(t);
+  writeState([{ seq: 1, hPct: 90, at: 1 }]);
+  await tick();
+  badSamples(store);
+
+  const first = monitor.observeSystemPrompt('system A');
+  assert.equal(first.changed, false);
+  assert.equal(monitor.rotateForSystemRewrite(), null);
+  assert.equal(store.routeFor(sessionId), null);
+
+  const changed = monitor.observeSystemPrompt('system B');
+  assert.equal(changed.changed, true);
+  const route = monitor.rotateForSystemRewrite();
+  assert.ok(route);
+  const stored = store.routeFor(sessionId);
+  assert.equal(stored.reason, 'system-rewrite');
+  assert.equal(stored.foldSeq, null);
+  assert.equal(stored.cacheHitPct, null);
+  assert.equal(stored.avgTtftMs, 25000);
+  assert.equal(stored.avgTps, 10);
+  assert.equal(monitor.rotations, 1);
+  assert.equal(monitor.status().systemRewriteRotations, 1);
+  assert.ok(monitor.status().systemPromptFp);
+
+  // The rewrite often causes a fold rebuild shortly afterwards. That fold
+  // must not trigger a second rotation for the same cache miss.
+  writeState([{ seq: 1, hPct: 90, at: 1 }, { seq: 2, hPct: 90, at: 2 }]);
+  await tick();
+  assert.equal(monitor.rotations, 1);
+});
+
+test('system prompt rewrite does not rotate when samples are fast', async (t) => {
+  const { store, monitor, writeState, tick } = setup(t);
+  writeState([{ seq: 1, hPct: 90, at: 1 }]);
+  await tick();
+  goodSamples(store);
+  monitor.observeSystemPrompt('system A');
+  monitor.observeSystemPrompt('system B');
+  assert.equal(monitor.rotateForSystemRewrite(), null);
+  assert.equal(store.routeFor(sessionId), null);
+  assert.equal(monitor.rotations, 0);
+});
+
+test('system rewrite bypass can be disabled or blocked by a non-DeepSeek request', async (t) => {
+  const disabled = setup(t, { systemRewriteBypassCache: false });
+  disabled.writeState([{ seq: 1, hPct: 90, at: 1 }]);
+  await disabled.tick();
+  badSamples(disabled.store);
+  disabled.monitor.observeSystemPrompt('system A');
+  disabled.monitor.observeSystemPrompt('system B');
+  assert.equal(disabled.monitor.rotateForSystemRewrite(), null);
+  assert.equal(disabled.store.routeFor(sessionId), null);
+
+  const nonTarget = setup(t);
+  nonTarget.writeState([{ seq: 1, hPct: 90, at: 1 }]);
+  await nonTarget.tick();
+  badSamples(nonTarget.store);
+  nonTarget.monitor.setTargetActive(false);
+  nonTarget.monitor.observeSystemPrompt('system A');
+  nonTarget.monitor.observeSystemPrompt('system B');
+  assert.equal(nonTarget.monitor.rotateForSystemRewrite(), null);
+  assert.equal(nonTarget.store.routeFor(sessionId), null);
 });
 
 test('discovers a state file when the host label has changed', async (t) => {
