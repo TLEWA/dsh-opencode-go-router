@@ -81,8 +81,38 @@ test('the performance panel shows the configured throughput threshold', () => {
           error: '',
           data: {
             version: '0.2.0',
-            config: { cacheHitThresholdPct: 25, ttftThresholdMs: 12000, throughputThresholdTps: 60 },
-            history: [],
+            config: {
+              cacheHitThresholdPct: 25,
+              ttftThresholdMs: 12000,
+              throughputThresholdTps: 60,
+              stepTtftGraceMs: 2000,
+              stepThroughputGraceTps: 5,
+            },
+            sessions: [{
+              sessionId: 'session-abcdef123456',
+              lastRequestAt: 1700000001000,
+              stepping: {
+                step: 2,
+                effectiveTtftThresholdMs: 16000,
+                effectiveThroughputThresholdTps: 50,
+              },
+            }],
+            history: [{
+              id: 'h1',
+              sessionId: 'session-abcdef123456',
+              at: 1700000000000,
+              reason: 'cache-and-performance',
+              foldSeq: 3,
+              cacheHitPct: 0,
+              step: 2,
+              beforeTtftMs: 30000,
+              beforeTps: 30,
+              afterTtftMs: 5000,
+              afterTps: 100,
+              afterSamples: 5,
+              afterTarget: 5,
+              afterComplete: true,
+            }],
           },
         }, () => {}];
       }
@@ -123,4 +153,7 @@ test('the performance panel shows the configured throughput threshold', () => {
   };
   walk(tree);
   assert.ok(texts.some((text) => text.includes('吞吐 ≤ 60 tok/s')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('TTFT 阈值放宽 2s')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('步进 2')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('最近活跃会话步进 2')), texts.join('\n'));
 });

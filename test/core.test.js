@@ -7,15 +7,18 @@ import {
   biliSessionKey,
   biliStatePathCandidates,
   cacheCondition,
+  consecutiveFailedSwitches,
   decideRotation,
   DEFAULTS,
   extractFolds,
+  historyEntryFailed,
   isTargetRequest,
   maxFoldSeq,
   newRoutingId,
   normalizeConfig,
   normalizeFolds,
   performanceCondition,
+  rotationThresholds,
   summarizeSamples,
   systemPromptFingerprint,
   systemPromptText,
@@ -34,6 +37,8 @@ test('normalizeConfig applies defaults and clamps', () => {
   assert.equal(config.cacheHitThresholdPct, 100);
   assert.equal(config.sampleSize, 1);
   assert.equal(normalizeConfig({}).ttftThresholdMs, 12000);
+  assert.equal(normalizeConfig({}).stepTtftGraceMs, 2000);
+  assert.equal(normalizeConfig({}).stepThroughputGraceTps, 5);
   assert.equal(normalizeConfig({}).systemRewriteBypassCache, true);
   assert.equal(normalizeConfig({ systemRewriteBypassCache: false }).systemRewriteBypassCache, false);
   assert.deepEqual(config.requestCheckDelaysMs, [10, 20]);
@@ -157,6 +162,73 @@ test('performanceCondition requires five samples and uses the 12s default', () =
   assert.equal(performanceCondition(good, config).bad, false);
   assert.equal(performanceCondition(good.slice(0, 4), config).bad, false);
   assert.equal(performanceCondition(good.slice(0, 4), normalizeConfig({ requireFullSamples: false })).bad, false);
+});
+
+test('consecutive failed switches widen thresholds by 2s and 5 tok/s each', () => {
+  const config = normalizeConfig({});
+  const zero = rotationThresholds(config, 0);
+  assert.equal(zero.effectiveTtftThresholdMs, 12000);
+  assert.equal(zero.effectiveThroughputThresholdTps, 60);
+  const one = rotationThresholds(config, 1);
+  assert.equal(one.step, 1);
+  assert.equal(one.effectiveTtftThresholdMs, 14000);
+  assert.equal(one.effectiveThroughputThresholdTps, 55);
+  const two = rotationThresholds(config, 2);
+  assert.equal(two.effectiveTtftThresholdMs, 16000);
+  assert.equal(two.effectiveThroughputThresholdTps, 50);
+  const floor = rotationThresholds(config, 100);
+  assert.equal(floor.effectiveThroughputThresholdTps, 0.01);
+
+  const disabled = normalizeConfig({ stepTtftGraceMs: 0, stepThroughputGraceTps: 0 });
+  assert.equal(rotationThresholds(disabled, 3).effectiveTtftThresholdMs, 12000);
+  assert.equal(rotationThresholds(disabled, 3).effectiveThroughputThresholdTps, 60);
+});
+
+test('performanceCondition applies the stepped thresholds', () => {
+  const config = normalizeConfig({ sampleSize: 5 });
+  const at13s = Array.from({ length: 5 }, () => ({ ttftMs: 13000, tps: 100 }));
+  assert.equal(performanceCondition(at13s, config).bad, true);
+  assert.equal(performanceCondition(at13s, config, 1).bad, false);
+  assert.equal(performanceCondition(at13s, config, 2).bad, false);
+
+  const at14s = Array.from({ length: 5 }, () => ({ ttftMs: 14000, tps: 100 }));
+  assert.equal(performanceCondition(at14s, config, 1).bad, true);
+
+  const at57tps = Array.from({ length: 5 }, () => ({ ttftMs: 1000, tps: 57 }));
+  assert.equal(performanceCondition(at57tps, config).bad, true);
+  assert.equal(performanceCondition(at57tps, config, 1).bad, false);
+  const at55tps = Array.from({ length: 5 }, () => ({ ttftMs: 1000, tps: 55 }));
+  assert.equal(performanceCondition(at55tps, config, 1).bad, true);
+});
+
+test('consecutiveFailedSwitches counts completed bad windows and stops at a good one', () => {
+  const config = normalizeConfig({});
+  const bad = (at) => ({
+    sessionId: 's', at, afterComplete: true, afterTtftMs: 25000, afterTps: 10,
+  });
+  const good = (at) => ({
+    sessionId: 's', at, afterComplete: true, afterTtftMs: 1000, afterTps: 100,
+  });
+  assert.equal(historyEntryFailed(bad(1), config), true);
+  assert.equal(historyEntryFailed(good(2), config), false);
+  assert.equal(historyEntryFailed({ sessionId: 's', at: 3, afterComplete: false }, config), false);
+
+  assert.equal(consecutiveFailedSwitches([bad(1), bad(2)], 's', config), 2);
+  assert.equal(consecutiveFailedSwitches([bad(1), bad(2), good(3)], 's', config), 0);
+  assert.equal(consecutiveFailedSwitches([good(1), bad(2)], 's', config), 1);
+  // An in-flight window is skipped, so earlier failures still count.
+  assert.equal(consecutiveFailedSwitches([bad(1), bad(2), { sessionId: 's', at: 3, afterComplete: false }], 's', config), 2);
+  assert.equal(consecutiveFailedSwitches([bad(1), { sessionId: 'other', at: 2, afterComplete: true, afterTtftMs: 25000, afterTps: 10 }], 's', config), 1);
+});
+
+test('decideRotation applies the stepped performance threshold', () => {
+  const config = normalizeConfig({ sampleSize: 5, cacheHitThresholdPct: 5 });
+  const badCache = [{ seq: 1, hPct: 0 }];
+  const at13s = Array.from({ length: 5 }, () => ({ ttftMs: 13000, tps: 100 }));
+  assert.equal(decideRotation({ previousFolds: badCache, samples: at13s, config }).rotate, true);
+  assert.equal(decideRotation({ previousFolds: badCache, samples: at13s, config, consecutiveFailures: 1 }).rotate, false);
+  const at14s = Array.from({ length: 5 }, () => ({ ttftMs: 14000, tps: 100 }));
+  assert.equal(decideRotation({ previousFolds: badCache, samples: at14s, config, consecutiveFailures: 1 }).rotate, true);
 });
 
 test('decideRotation requires both cache and performance problems', () => {

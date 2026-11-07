@@ -59,7 +59,15 @@ function setup(t, overrides = {}) {
     await store.dispose();
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
-  return { config, store, monitor, stateFile, writeState, tick: async () => { clock += 2000; await monitor.tick(); } };
+  return {
+    config,
+    store,
+    monitor,
+    stateFile,
+    writeState,
+    now: () => clock,
+    tick: async () => { clock += 2000; await monitor.tick(); },
+  };
 }
 
 function badSamples(store, count = 5) {
@@ -162,6 +170,131 @@ test('next fold rotates when the previous fold lost cache and samples are slow',
   await tick();
   assert.equal(monitor.rotations, 2);
   assert.notEqual(store.routeFor(sessionId).value, route.value);
+});
+
+test('consecutive failed switches widen the next fold rotation threshold', async (t) => {
+  const { store, monitor, writeState, tick, now } = setup(t, {
+    ttftThresholdMs: 20000,
+    throughputThresholdTps: 60,
+    stepTtftGraceMs: 2000,
+    stepThroughputGraceTps: 5,
+    minRotationGapMs: 0,
+  });
+  writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await tick();
+  badSamples(store);
+  writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+  await tick();
+  assert.equal(monitor.rotations, 1);
+  assert.equal(store.routeFor(sessionId).step, 0);
+
+  // The first post-switch window is still slower than the base 20s target.
+  for (let i = 0; i < 5; i += 1) {
+    store.recordSample(sessionId, {
+      ttftMs: 21000,
+      tps: 100,
+      outputTokens: 100,
+      at: now() + 100 + i,
+    }, 20);
+  }
+  let status = monitor.status();
+  assert.equal(status.stepping.consecutiveFailures, 1);
+  assert.equal(status.stepping.effectiveTtftThresholdMs, 22000);
+  assert.equal(status.stepping.effectiveThroughputThresholdTps, 55);
+
+  // 21s is below the stepped 22s threshold, so this fold does not rotate.
+  writeState([
+    { seq: 1, hPct: 0, at: 1 },
+    { seq: 2, hPct: 0, at: 2 },
+    { seq: 3, hPct: 0, at: 3 },
+  ]);
+  await tick();
+  assert.equal(monitor.rotations, 1);
+
+  // A slower window does cross the stepped threshold; the record notes step 1.
+  for (let i = 0; i < 5; i += 1) {
+    store.recordSample(sessionId, {
+      ttftMs: 23000,
+      tps: 100,
+      outputTokens: 100,
+      at: now() + 100 + i,
+    }, 20);
+  }
+  writeState([
+    { seq: 1, hPct: 0, at: 1 },
+    { seq: 2, hPct: 0, at: 2 },
+    { seq: 3, hPct: 0, at: 3 },
+    { seq: 4, hPct: 0, at: 4 },
+  ]);
+  await tick();
+  assert.equal(monitor.rotations, 2);
+  assert.equal(store.routeFor(sessionId).step, 1);
+
+  // After a second failed post-switch window the next threshold is 24s/50.
+  for (let i = 0; i < 5; i += 1) {
+    store.recordSample(sessionId, {
+      ttftMs: 23000,
+      tps: 100,
+      outputTokens: 100,
+      at: now() + 100 + i,
+    }, 20);
+  }
+  status = monitor.status();
+  assert.equal(status.stepping.consecutiveFailures, 2);
+  assert.equal(status.stepping.effectiveTtftThresholdMs, 24000);
+  assert.equal(status.stepping.effectiveThroughputThresholdTps, 50);
+
+  writeState([
+    { seq: 1, hPct: 0, at: 1 },
+    { seq: 2, hPct: 0, at: 2 },
+    { seq: 3, hPct: 0, at: 3 },
+    { seq: 4, hPct: 0, at: 4 },
+    { seq: 5, hPct: 0, at: 5 },
+  ]);
+  await tick();
+  assert.equal(monitor.rotations, 2);
+});
+
+test('system rewrite rotation also uses the failure step', async (t) => {
+  const { store, monitor, now } = setup(t, {
+    ttftThresholdMs: 20000,
+    throughputThresholdTps: 60,
+    stepTtftGraceMs: 2000,
+    stepThroughputGraceTps: 5,
+  });
+  badSamples(store);
+  monitor.observeSystemPrompt('system A');
+  monitor.observeSystemPrompt('system B');
+  const first = monitor.rotateForSystemRewrite();
+  assert.ok(first);
+  assert.equal(first.step, 0);
+
+  for (let i = 0; i < 5; i += 1) {
+    store.recordSample(sessionId, {
+      ttftMs: 21000,
+      tps: 100,
+      outputTokens: 100,
+      at: now() + 100 + i,
+    }, 20);
+  }
+  assert.equal(monitor.status().stepping.consecutiveFailures, 1);
+
+  monitor.observeSystemPrompt('system C');
+  assert.equal(monitor.rotateForSystemRewrite(), null);
+
+  for (let i = 0; i < 5; i += 1) {
+    store.recordSample(sessionId, {
+      ttftMs: 23000,
+      tps: 100,
+      outputTokens: 100,
+      at: now() + 200 + i,
+    }, 20);
+  }
+  monitor.observeSystemPrompt('system D');
+  const second = monitor.rotateForSystemRewrite();
+  assert.ok(second);
+  assert.equal(second.step, 1);
+  assert.equal(store.routeFor(sessionId).step, 1);
 });
 
 test('a non-DeepSeek target state blocks rotation until a DeepSeek request returns', async (t) => {

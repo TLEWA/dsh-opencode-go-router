@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. Versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-08
+
+### Added
+
+- Consecutive-failure stepping: when a complete post-switch window is still slower than the base targets, the next TTFT target widens by 2 seconds and the throughput target drops by 5 tok/s; a window that meets the base targets resets the step. Failure is always judged against the base targets.
+- New `stepTtftGraceMs` / `stepThroughputGraceTps` settings; the status route and switch records expose `step`, and `sessions.stepping` exposes the current step and effective thresholds.
+- The settings-page panel shows each switch's step, the most recently active session's effective thresholds, and the per-step grace rule.
+
 ## [0.2.0] - 2026-11-08
 
 ### Added

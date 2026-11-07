@@ -23,12 +23,14 @@ test('RouterStore persists routes and samples', async (t) => {
     foldSeq: null,
     reason: 'cache-and-performance',
     cacheHitPct: 0,
+    step: 1,
     avgTtftMs: 25000,
     avgTps: 10,
   });
   assert.equal(route.value, 'ses_abc');
   assert.equal(route.rotatedAt, null);
   assert.equal(route.foldSeq, null);
+  assert.equal(route.step, 1);
 
   store.recordSample('session-1', { ttftMs: 1200, tps: 42.5, outputTokens: 100, at: 10 });
   store.recordSample('session-1', { ttftMs: -1, tps: 42.5, outputTokens: 100, at: 11 });
@@ -42,10 +44,12 @@ test('RouterStore persists routes and samples', async (t) => {
   await store.flush();
   const persisted = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   assert.equal(persisted.routes['session-1'].value, 'ses_abc');
+  assert.equal(persisted.routes['session-1'].step, 1);
   assert.equal(persisted.metrics['session-1'].length, 1);
 
   const reloaded = new RouterStore({ statePath, logger: quiet, debounceMs: 0 });
   assert.equal(reloaded.routeFor('session-1').value, 'ses_abc');
+  assert.equal(reloaded.routeFor('session-1').step, 1);
   assert.equal(reloaded.samplesFor('session-1')[0].tps, 42.5);
 });
 
@@ -60,6 +64,7 @@ test('RouterStore records rotation history and freezes the after window', async 
     reason: 'cache-and-performance',
     foldSeq: 3,
     cacheHitPct: 0,
+    step: 1,
     beforeTtftMs: 25000,
     beforeTps: 10,
     beforeSamples: 5,
@@ -68,6 +73,7 @@ test('RouterStore records rotation history and freezes the after window', async 
   let rows = store.history();
   assert.equal(rows.length, 1);
   assert.equal(rows[0].id, 'session-1@1000');
+  assert.equal(rows[0].step, 1);
   assert.equal(rows[0].beforeTtftMs, 25000);
   assert.equal(rows[0].afterSamples, 0);
   assert.equal(rows[0].afterComplete, false);
@@ -92,6 +98,7 @@ test('RouterStore records rotation history and freezes the after window', async 
   await store.flush();
   const reloaded = new RouterStore({ statePath, logger: quiet, debounceMs: 0, sampleSize: 5 });
   assert.equal(reloaded.history()[0].afterTtftMs, 1200);
+  assert.equal(reloaded.history()[0].step, 1);
 });
 
 test('RouterStore seeds history from existing routes', async (t) => {
