@@ -21,6 +21,9 @@ function tempFile(t, source) {
 }
 
 const source = [
+  'async function handleRequest() {',
+  '  prepared=await runPrepare();memProbe(opts.debug,log2,session.id,"prepared",typeof prepared.body==="string"?Buffer.byteLength(prepared.body):prepared.body.byteLength);await yieldToEventLoop();',
+  '}',
   'async function preflightCompressIfNeeded() {',
   '  let outbound = prepared;',
   '  if (result.compressedRanges > 0) {',
@@ -49,8 +52,9 @@ test('patchSource inserts the hook call and helper exactly once', () => {
   assert.equal(result.alreadyPatched, false);
   assert.equal((result.source.split('outbound=rebuilt;\n').length - 1), 0);
   assert.equal((result.source.split('outbound=rebuilt;await __biliPreFoldRotation(req,session,log2);').length - 1), 1);
+  assert.equal((result.source.split('if(session.stats.pendingFoldUsage===true)await __biliPreFoldRotation(req,session,log2);').length - 1), 1);
   assert.equal((result.source.split('async function __biliPreFoldRotation').length - 1), 1);
-  assert.match(result.source, /dsh-opencode-go-router pre-fold hook v1/);
+  assert.match(result.source, /dsh-opencode-go-router pre-fold hook v2/);
   assert.match(result.source, /127\.0\.0\.1/);
   assert.match(result.source, /x-opencode-session/);
 
@@ -63,9 +67,25 @@ test('patchSource refuses unknown bundle shapes', () => {
   assert.throws(() => patchSource('const x = 1;'), /expected exactly one/);
   assert.throws(() => patchSource(source + source), /expected exactly one/);
   assert.throws(
-    () => patchSource(source + '\n/* dsh-opencode-go-router pre-fold hook v1 */\n'),
-    /marker found but the pre-fold call is missing/,
+    () => patchSource(source + '\n/* dsh-opencode-go-router pre-fold hook v2 */\n'),
+    /marker found but the pre-fold helper is missing/,
   );
+});
+
+test('patchSource upgrades a v1 patch without duplicating the helper', () => {
+  const v2 = patchSource(source).source;
+  const v1 = v2
+    .replace('/* dsh-opencode-go-router pre-fold hook v2 */', '/* dsh-opencode-go-router pre-fold hook v1 */')
+    .replace('if(session.stats.pendingFoldUsage===true)await __biliPreFoldRotation(req,session,log2);', '');
+  assert.match(v1, /pre-fold hook v1/);
+  assert.doesNotMatch(v1, /pendingFoldUsage===true/);
+
+  const upgraded = patchSource(v1);
+  assert.equal(upgraded.alreadyPatched, false);
+  assert.match(upgraded.source, /pre-fold hook v2/);
+  assert.equal((upgraded.source.split('if(session.stats.pendingFoldUsage===true)await __biliPreFoldRotation(req,session,log2);').length - 1), 1);
+  assert.equal((upgraded.source.split('async function __biliPreFoldRotation').length - 1), 1);
+  assert.equal(patchSource(upgraded.source).alreadyPatched, true);
 });
 
 test('applyPatch writes a backup and revertPatch restores it', (t) => {

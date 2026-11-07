@@ -8,6 +8,7 @@ All notable changes to this project are documented here. Versioning follows
 ### Added
 
 - **Pre-fold seam.** The plugin serves `POST /pre-fold` on `127.0.0.1` and publishes a descriptor. The optional billion-context patch calls it after the rebuilt body exists but before that body is forwarded, so the pending switch is applied to the rebuild request itself. The rebuild is cold anyway; the route change and that cold prefill share one miss instead of adding a second one.
+- The patch covers both rebuild paths: explicit compression through the initial `runPrepare`, and automatic folding through `preflightCompressIfNeeded`; both ask the plugin before forwarding.
 - New patch script `scripts/patch-billion-context.mjs` with `--check` / `--apply` / `--revert`, automatic discovery under the DSH profiles, idempotent patching, and a `.opencode-router.bak` backup.
 - New `preFoldHook` (default `true`) and `preFoldHookPath` settings. Without the patch, or with the seam disabled, the plugin keeps the 0.3.0 deferred path and does not fail.
 

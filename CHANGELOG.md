@@ -8,6 +8,7 @@
 ### 新增
 
 - **折叠前衔接**：插件在 `127.0.0.1` 上启动 `POST /pre-fold` 端点并发布描述文件；可选的 billion-context 补丁在重建请求体生成后、转发前回调，插件把待切换应用到这条重建请求本身。重建本来就要冷一次，换路由与这次冷 prefill 合并，不再额外多一次冷请求。
+- 补丁同时挂接两条重建路径：显式压缩走初始 `runPrepare`，自动折叠走 `preflightCompressIfNeeded`；两者都会在转发前询问插件。
 - 新增补丁脚本 `scripts/patch-billion-context.mjs`，支持 `--check` / `--apply` / `--revert`、自动发现 profile 内的 billion-context、幂等打补丁，并保留 `.opencode-router.bak` 备份。
 - 新增 `preFoldHook`（默认 `true`）与 `preFoldHookPath` 配置。未打补丁或关闭衔接时，插件仍使用 0.3.0 的延后路径，不会报错。
 

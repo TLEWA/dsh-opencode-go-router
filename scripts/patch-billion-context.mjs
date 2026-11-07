@@ -30,9 +30,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const MARKER = '/* dsh-opencode-go-router pre-fold hook v1 */';
+const MARKER = '/* dsh-opencode-go-router pre-fold hook v2 */';
+const LEGACY_MARKER = '/* dsh-opencode-go-router pre-fold hook v1 */';
 const ORIGINAL = 'outbound=rebuilt;';
 const PATCHED = 'outbound=rebuilt;await __biliPreFoldRotation(req,session,log2);';
+const INITIAL_ANCHOR = 'prepared=await runPrepare();memProbe(opts.debug,log2,session.id,"prepared",typeof prepared.body==="string"?Buffer.byteLength(prepared.body):prepared.body.byteLength);await yieldToEventLoop();';
+const INITIAL_PATCHED = 'prepared=await runPrepare();memProbe(opts.debug,log2,session.id,"prepared",typeof prepared.body==="string"?Buffer.byteLength(prepared.body):prepared.body.byteLength);if(session.stats.pendingFoldUsage===true)await __biliPreFoldRotation(req,session,log2);await yieldToEventLoop();';
 const BAK_SUFFIX = '.opencode-router.bak';
 
 function dshHome() {
@@ -142,21 +145,52 @@ async function __biliPreFoldRotation(req, session, log) {
 
 export function patchSource(source) {
   const text = String(source);
-  const markerAt = text.indexOf(MARKER);
-  const calls = text.split(ORIGINAL).length - 1;
-  if (markerAt >= 0) {
-    if (!text.includes(PATCHED)) {
-      throw new Error('marker found but the pre-fold call is missing; reinstall billion-context or restore the backup');
+  const hasV2 = text.indexOf(MARKER) >= 0;
+  const hasV1 = text.indexOf(LEGACY_MARKER) >= 0;
+  const hasHelper = text.indexOf('async function __biliPreFoldRotation') >= 0;
+  const hasPreflight = text.indexOf(PATCHED) >= 0;
+  const hasInitial = text.indexOf(INITIAL_PATCHED) >= 0;
+
+  if (hasV2 || hasV1) {
+    if (!hasHelper) {
+      throw new Error('marker found but the pre-fold helper is missing; reinstall billion-context or restore the backup');
     }
-    return { source: text, alreadyPatched: true };
+    let out = text;
+    let changed = false;
+    if (!hasPreflight) {
+      if (out.indexOf(ORIGINAL) < 0) {
+        throw new Error('marker found but the pre-fold call is missing; reinstall billion-context or restore the backup');
+      }
+      out = out.replace(ORIGINAL, PATCHED);
+      changed = true;
+    }
+    if (!hasInitial) {
+      if (out.indexOf(INITIAL_ANCHOR) < 0) {
+        throw new Error('marker found but the initial prepare anchor is missing; this billion-context version is unsupported');
+      }
+      out = out.replace(INITIAL_ANCHOR, INITIAL_PATCHED);
+      changed = true;
+    }
+    if (hasV1) {
+      out = out.replace(LEGACY_MARKER, MARKER);
+      changed = true;
+    }
+    if (!changed) return { source: text, alreadyPatched: true };
+    return { source: out, alreadyPatched: false };
   }
-  if (calls !== 1) {
-    throw new Error('expected exactly one "' + ORIGINAL + '" anchor, found ' + calls + '; this billion-context version is unsupported');
-  }
-  if (text.includes('__biliPreFoldRotation')) {
+
+  if (text.indexOf('__biliPreFoldRotation') >= 0) {
     throw new Error('an unexpected __biliPreFoldRotation symbol already exists');
   }
-  const patched = text.replace(ORIGINAL, PATCHED);
+  const preflightCalls = text.split(ORIGINAL).length - 1;
+  const initialCalls = text.split(INITIAL_ANCHOR).length - 1;
+  if (preflightCalls !== 1 || initialCalls !== 1) {
+    throw new Error(
+      'expected exactly one rebuild anchor and one initial prepare anchor, found '
+      + preflightCalls + ' and ' + initialCalls + '; this billion-context version is unsupported',
+    );
+  }
+  const patched = text.replace(ORIGINAL, PATCHED).replace(INITIAL_ANCHOR, INITIAL_PATCHED);
   return {
     source: patched + (patched.endsWith('\n') ? '' : '\n') + helperSource(),
     alreadyPatched: false,
@@ -172,7 +206,10 @@ export function applyPatch(file) {
   const result = patchSource(source);
   if (result.alreadyPatched) return { changed: false, backup: backupPathFor(file) };
   const backup = backupPathFor(file);
-  fs.copyFileSync(file, backup);
+  // Keep the first pristine copy across upgrades (v1 -> v2). The current file
+  // may already contain an older patch, so never overwrite an existing backup
+  // with it.
+  if (!fs.existsSync(backup)) fs.copyFileSync(file, backup);
   fs.writeFileSync(file, result.source, 'utf8');
   return { changed: true, backup };
 }
@@ -266,11 +303,16 @@ export function main(argv = process.argv.slice(2)) {
   try {
     const source = fs.readFileSync(file, 'utf8');
     if (args.action === 'check') {
-      const patched = source.includes(MARKER) && source.includes(PATCHED);
-      console.log((patched ? 'patched: ' : 'not patched: ') + file);
-      if (!source.includes(MARKER) && (source.split(ORIGINAL).length - 1) !== 1) {
-        console.error('unsupported billion-context version: expected exactly one "' + ORIGINAL + '" anchor');
-        return 4;
+      const patched = source.includes(MARKER) && source.includes(PATCHED) && source.includes(INITIAL_PATCHED);
+      const legacy = source.includes(LEGACY_MARKER);
+      console.log((patched ? 'patched: ' : legacy ? 'outdated v1 patch: ' : 'not patched: ') + file);
+      if (!source.includes(MARKER) && !legacy) {
+        const preflightCalls = source.split(ORIGINAL).length - 1;
+        const initialCalls = source.split(INITIAL_ANCHOR).length - 1;
+        if (preflightCalls !== 1 || initialCalls !== 1) {
+          console.error('unsupported billion-context version: expected exactly one rebuild anchor and one initial prepare anchor');
+          return 4;
+        }
       }
       return patched ? 0 : 1;
     }
