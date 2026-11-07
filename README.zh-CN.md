@@ -33,24 +33,17 @@ OpenCode Go 通过请求头 `x-opencode-session` 把一条会话固定到一个�
    - 把包加入 `dsh.profile.bundles`；
    - 在 `dependencies` 里加入 `"opencode-router": "link:C:/Users/me/DSHs/opencode-router"`。
 3. 让 profile 的 `node_modules/opencode-router` 指向本仓库（Windows 下目录 junction 或 symlink 均可）。
-4. 在 profile 的 `cordis.patch.yml`（顶层 YAML 数组）里加入：
+4. **不要**再往 profile 的 `cordis.patch.yml` 里手动加本插件的独立行。包内已声明 `dsh.bundle.patch: ./cordis.patch.yml`，由它插入插件行；不带 `insert` 的 profile 行只是覆盖项，创建不了插件行。
+5. 重启 DSH。插件管理器里 `opencode-router` 应显示为 profile bundle，并有一行 `include:opencode-router`。如果宿主在 bundle 声明存在之前就已经启动，用插件管理器重新加载，或重启 DSH。
+6. 访问 `http://127.0.0.1:<DSH Web 端口>/opencode-router/status` 查看实时状态。
+
+要改默认值，在 profile 的 `cordis.patch.yml` 里按行 id 覆盖：
 
 ```yaml
 - id: opencode-router
-  name: "opencode-router"
   config:
-    enabled: true
-    providers:
-      - opencode-go
     cacheHitThresholdPct: 5
-    foldsWindow: 1
-    ttftThresholdMs: 20000
-    throughputThresholdTps: 60
-    sampleSize: 5
 ```
-
-5. 重启 DSH。
-6. 访问 `http://127.0.0.1:<DSH Web 端口>/opencode-router/status` 查看实时状态。
 
 插件入口在每次 `apply` 时用带时间戳的查询串重新加载 `lib/impl.js`，所以改实现并碰一下插件配置通常就能生效；但 `lib/core.js`、`lib/store.js`、`lib/monitor.js` 的改动仍需要完整重启 DSH（Node 会缓存这些静态 import）。
 

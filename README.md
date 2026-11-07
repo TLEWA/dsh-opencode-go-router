@@ -33,24 +33,17 @@ The first fold seen after a plugin start is a baseline and never causes rotation
    - add the package to `dsh.profile.bundles`;
    - add `"opencode-router": "link:C:/Users/me/DSHs/opencode-router"` to `dependencies`.
 3. Make the profile's `node_modules/opencode-router` point at the repository (a directory junction/symlink is enough on Windows).
-4. Add an entry to the profile's `cordis.patch.yml` (top-level YAML array):
+4. Do **not** add a standalone row for this plugin to the profile's `cordis.patch.yml`. The package declares `dsh.bundle.patch: ./cordis.patch.yml`, which inserts the plugin row itself. A profile row added without an `insert` is only an override and cannot create the row.
+5. Restart DSH. In the plugin manager, `opencode-router` should appear as a profile bundle with one row (`include:opencode-router`). If the host was already running before the bundle declaration existed, reload it through the plugin manager or restart DSH.
+6. Read the live state at `http://127.0.0.1:<DSH-web-port>/opencode-router/status`.
+
+To change defaults, add an override by row id to the profile's `cordis.patch.yml`:
 
 ```yaml
 - id: opencode-router
-  name: "opencode-router"
   config:
-    enabled: true
-    providers:
-      - opencode-go
     cacheHitThresholdPct: 5
-    foldsWindow: 1
-    ttftThresholdMs: 20000
-    throughputThresholdTps: 60
-    sampleSize: 5
 ```
-
-5. Restart DSH.
-6. Read the live state at `http://127.0.0.1:<DSH-web-port>/opencode-router/status`.
 
 Because the plugin entry point reloads `lib/impl.js` with a cache-busting query on every `apply`, editing the implementation and touching the plugin config is usually enough to try new code. Changes to `lib/core.js`, `lib/store.js`, or `lib/monitor.js` still need a full DSH restart, because those imports are cached by Node.
 

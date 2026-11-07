@@ -1,0 +1,5 @@
+# Bundle patch: where this plugin mounts in the DSH plugin chain.
+# Defaults live in lib/core.js; override them by id in the profile cordis.patch.yml.
+- insert:
+    - id: opencode-router
+      name: 'opencode-router'
