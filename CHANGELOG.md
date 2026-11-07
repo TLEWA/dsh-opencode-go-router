@@ -3,6 +3,19 @@
 本项目的所有重要变更都记录在这里，版本号遵循
 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - 2026-11-08
+
+### 变更
+
+- 折叠触发的轮换默认改为**延后应用**：billion-context 在重建请求完成后才写入折叠记录，插件看到折叠时重建请求已经发出；立即轮换会在这次冷请求之后再增加一次冷 prefill。现在插件先保存判定，等到预计会冷的请求再切换：系统提示词改写，或会话空闲达到 `foldDeferIdleMs`（默认 5 分钟）后的第一条合格请求。
+- 新增 `foldRotationMode`（`defer` / `immediate` / `off`）、`foldDeferIdleMs`、`foldDeferMaxMs`、`foldDeferMaxRequests`。`immediate` 恢复 0.2.1 的折叠时立即切换行为；`off` 关闭折叠触发切换，系统提示词改写路径不受影响。
+- 待切换会在之后的折叠不再满足缓存/性能条件时清除；安全阀默认关闭，除非显式配置，否则不会强制切换并制造额外冷请求。
+
+### 状态
+
+- 状态路由新增 `foldRotationMode`、`pendingRotation`、`deferredRotations`、`lastDeferredAt`；切换历史与路由的 `reason` 新增 `fold-deferred`。
+- 设置页性能记录把延后应用的折叠切换归入「折叠 + 性能」触发显示。
+
 ## [0.2.1] - 2026-11-08
 
 ### 新增

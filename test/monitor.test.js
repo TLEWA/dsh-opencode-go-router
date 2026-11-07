@@ -23,6 +23,7 @@ function setup(t, overrides = {}) {
     sampleSize: 5,
     requireFullSamples: true,
     cacheHitThresholdPct: 5,
+    foldRotationMode: 'immediate',
     ttftThresholdMs: 20000,
     throughputThresholdTps: 60,
     debug: false,
@@ -66,6 +67,7 @@ function setup(t, overrides = {}) {
     stateFile,
     writeState,
     now: () => clock,
+    advance: (ms) => { clock += ms; },
     tick: async () => { clock += 2000; await monitor.tick(); },
   };
 }
@@ -471,6 +473,125 @@ test('system rewrite bypass can be disabled or blocked by a non-DeepSeek request
   nonTarget.monitor.observeSystemPrompt('system B');
   assert.equal(nonTarget.monitor.rotateForSystemRewrite(), null);
   assert.equal(nonTarget.store.routeFor(sessionId), null);
+});
+
+
+test('deferred fold rotation waits for a system prompt rewrite', async (t) => {
+  const { store, monitor, writeState, tick } = setup(t, { foldRotationMode: 'defer' });
+  writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await tick();
+  badSamples(store);
+  writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+  await tick();
+
+  assert.equal(store.routeFor(sessionId), null);
+  assert.equal(monitor.rotations, 0);
+  let status = monitor.status();
+  assert.equal(status.pendingRotation.foldSeq, 2);
+  assert.equal(status.pendingRotation.requests, 0);
+  assert.equal(status.deferredRotations, 1);
+
+  monitor.observeSystemPrompt('system A');
+  monitor.observeSystemPrompt('system B');
+  const route = monitor.rotateForSystemRewrite();
+  assert.ok(route);
+  assert.equal(route.reason, 'fold-deferred');
+  assert.equal(route.foldSeq, 2);
+  assert.equal(store.routeFor(sessionId).reason, 'fold-deferred');
+  assert.equal(monitor.rotations, 1);
+  assert.equal(monitor.status().pendingRotation, null);
+  assert.equal(monitor.status().systemRewriteRotations, 1);
+  const history = store.history();
+  assert.equal(history.length, 1);
+  assert.equal(history[0].reason, 'fold-deferred');
+  assert.equal(history[0].foldSeq, 2);
+});
+
+test('deferred fold rotation waits for an idle request', async (t) => {
+  const { store, monitor, writeState, tick, advance } = setup(t, {
+    foldRotationMode: 'defer',
+    foldDeferIdleMs: 1000,
+  });
+  writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await tick();
+  badSamples(store);
+  writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+  await tick();
+  assert.ok(monitor.status().pendingRotation);
+
+  monitor.touch();
+  advance(500);
+  assert.equal(monitor.prepareRequest(), null);
+  assert.equal(store.routeFor(sessionId), null);
+  assert.equal(monitor.status().pendingRotation.requests, 1);
+
+  advance(600);
+  const route = monitor.prepareRequest();
+  assert.ok(route);
+  assert.equal(route.reason, 'fold-deferred');
+  assert.equal(route.foldSeq, 2);
+  assert.equal(monitor.status().pendingRotation, null);
+  assert.equal(monitor.rotations, 1);
+});
+
+test('a good fold clears a pending deferred rotation', async (t) => {
+  const { store, monitor, writeState, tick } = setup(t, { foldRotationMode: 'defer' });
+  writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await tick();
+  badSamples(store);
+  writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+  await tick();
+  assert.ok(monitor.status().pendingRotation);
+
+  writeState([
+    { seq: 1, hPct: 0, at: 1 },
+    { seq: 2, hPct: 0, at: 2 },
+    { seq: 3, hPct: 90, at: 3 },
+  ]);
+  await tick();
+  assert.equal(monitor.status().pendingRotation.foldSeq, 3);
+
+  writeState([
+    { seq: 1, hPct: 0, at: 1 },
+    { seq: 2, hPct: 0, at: 2 },
+    { seq: 3, hPct: 90, at: 3 },
+    { seq: 4, hPct: 90, at: 4 },
+  ]);
+  await tick();
+  assert.equal(monitor.status().pendingRotation, null);
+  assert.equal(store.routeFor(sessionId), null);
+  assert.equal(monitor.rotations, 0);
+});
+
+test('fold rotation can be disabled without disabling system rewrite rotation', async (t) => {
+  const { store, monitor, writeState, tick } = setup(t, { foldRotationMode: 'off' });
+  writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await tick();
+  badSamples(store);
+  writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+  await tick();
+  assert.equal(monitor.status().pendingRotation, null);
+  assert.equal(store.routeFor(sessionId), null);
+  assert.equal(monitor.rotations, 0);
+});
+
+test('maxDeferRequests forces a pending rotation before the next request', async (t) => {
+  const { store, monitor, writeState, tick } = setup(t, {
+    foldRotationMode: 'defer',
+    foldDeferIdleMs: 0,
+    foldDeferMaxRequests: 1,
+  });
+  writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await tick();
+  badSamples(store);
+  writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+  await tick();
+  monitor.touch();
+  assert.equal(monitor.prepareRequest(), null);
+  const route = monitor.prepareRequest();
+  assert.ok(route);
+  assert.equal(route.reason, 'fold-deferred');
+  assert.equal(store.routeFor(sessionId).reason, 'fold-deferred');
 });
 
 test('discovers a state file when the host label has changed', async (t) => {

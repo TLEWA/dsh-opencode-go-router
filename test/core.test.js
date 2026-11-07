@@ -41,6 +41,12 @@ test('normalizeConfig applies defaults and clamps', () => {
   assert.equal(normalizeConfig({}).stepThroughputGraceTps, 5);
   assert.equal(normalizeConfig({}).systemRewriteBypassCache, true);
   assert.equal(normalizeConfig({ systemRewriteBypassCache: false }).systemRewriteBypassCache, false);
+  assert.equal(normalizeConfig({}).foldRotationMode, 'defer');
+  assert.equal(normalizeConfig({ foldRotationMode: 'IMMEDIATE' }).foldRotationMode, 'immediate');
+  assert.equal(normalizeConfig({ foldRotationMode: 'off' }).foldRotationMode, 'off');
+  assert.equal(normalizeConfig({ foldRotationMode: 'bogus' }).foldRotationMode, 'defer');
+  assert.equal(normalizeConfig({ foldDeferIdleMs: -5 }).foldDeferIdleMs, 0);
+  assert.equal(normalizeConfig({ foldDeferMaxRequests: 2.6 }).foldDeferMaxRequests, 3);
   assert.deepEqual(config.requestCheckDelaysMs, [10, 20]);
   assert.equal(config.statePath.endsWith(path.join('storages', 'opencode-router', 'state.json')), true);
 });
