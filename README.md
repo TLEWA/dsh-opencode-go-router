@@ -1,8 +1,14 @@
-# opencode-router
+# dsh-opencode-go-router
+
+[![CI](https://github.com/TLEWA/dsh-opencode-go-router/actions/workflows/ci.yml/badge.svg)](https://github.com/TLEWA/dsh-opencode-go-router/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/dsh-opencode-go-router.svg)](https://www.npmjs.com/package/dsh-opencode-go-router)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+[English](./README.md) · [简体中文](./README.zh-CN.md)
 
 A DeepSeek Harness (DSH) host plugin that gives an OpenCode Go conversation using a DeepSeek-series model a fresh routing id when billion-context compression loses the reusable prompt cache **and** recent requests are slow, or when a system-prompt rewrite is about to make the next cache miss unavoidable.
 
-[中文说明](./README.zh-CN.md)
+This is the npm package for the DSH plugin whose internal id is `opencode-router`. It only rotates the OpenCode Go routing header; it is not a model adapter.
 
 ## Why
 
@@ -32,17 +38,26 @@ A rotation changes only the upstream routing id. billion-context keeps writing t
 
 - DSH with the `llm-pi-ai` adapter and an OpenCode Go provider (default `opencode-go`) configured with at least one DeepSeek-series model (model id starts with `deepseek`).
 - billion-context installed and actively saving session state.
+- DSH 0.2.1-rc.5 or newer, below 0.3.0.
 - Node.js 20 or newer.
 
-## Install into a DSH profile (local development)
+## Install from npm
+
+```bash
+dsh plugin add dsh-opencode-go-router --profile <profile>
+```
+
+Or add `dsh-opencode-go-router` from the DSH plugin manager's add-plugin box. The package declares `dsh.bundle.patch`, so a normal install creates the `opencode-router` row; do not add a separate profile row for it.
+
+## Install from a local checkout (development)
 
 1. Keep this repository somewhere stable, for example `C:/Users/me/DSHs/opencode-router`.
 2. In the profile's `package.json`:
-   - add the package to `dsh.profile.bundles`;
-   - add `"opencode-router": "link:C:/Users/me/DSHs/opencode-router"` to `dependencies`.
-3. Make the profile's `node_modules/opencode-router` point at the repository (a directory junction/symlink is enough on Windows).
+   - add `dsh-opencode-go-router` to `dsh.profile.bundles`;
+   - add `"dsh-opencode-go-router": "link:C:/Users/me/DSHs/opencode-router"` to `dependencies`.
+3. Make the profile's `node_modules/dsh-opencode-go-router` point at the repository (a directory junction/symlink is enough on Windows).
 4. Do **not** add a standalone row for this plugin to the profile's `cordis.patch.yml`. The package declares `dsh.bundle.patch: ./cordis.patch.yml`, which inserts the plugin row itself. A profile row added without an `insert` is only an override and cannot create the row.
-5. Restart DSH. In the plugin manager, `opencode-router` should appear as a profile bundle with one row (`include:opencode-router`). If the host was already running before the bundle declaration existed, reload it through the plugin manager or restart DSH.
+5. Restart DSH. In the plugin manager, `dsh-opencode-go-router` should appear as a profile bundle with one row (`include:opencode-router`). If the host was already running before the bundle declaration existed, reload it through the plugin manager or restart DSH.
 6. Read the live state at `http://127.0.0.1:<DSH-web-port>/opencode-router/status`.
 
 To change defaults, add an override by row id to the profile's `cordis.patch.yml`:

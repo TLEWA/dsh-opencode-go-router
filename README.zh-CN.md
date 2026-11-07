@@ -1,8 +1,14 @@
-# opencode-router
+# dsh-opencode-go-router
+
+[![CI](https://github.com/TLEWA/dsh-opencode-go-router/actions/workflows/ci.yml/badge.svg)](https://github.com/TLEWA/dsh-opencode-go-router/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/dsh-opencode-go-router.svg)](https://www.npmjs.com/package/dsh-opencode-go-router)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+[简体中文](./README.zh-CN.md) · [English](./README.md)
 
 一个 DeepSeek Harness（DSH）宿主插件：当使用 OpenCode Go 的 DeepSeek 系列模型的会话，在 billion-context 压缩上下文后丢失了可复用的前缀缓存，**并且**最近几次请求很慢时，在**下一次压缩重建**时给 OpenCode Go 会话换一个新的路由 id；当系统提示词改写即将使下一次缓存未命中不可避免时，也会为携带改写的同一个请求换路由。
 
-[English](./README.md)
+这是内部插件 id 为 `opencode-router` 的 DSH 插件的 npm 包。它只轮换 OpenCode Go 的路由请求头，不是模型适配器。
 
 ## 为什么需要它
 
@@ -32,17 +38,26 @@ OpenCode Go 通过请求头 `x-opencode-session` 把一条会话固定到一个�
 
 - DSH 使用 `llm-pi-ai` 适配器，并配置了 OpenCode Go provider（默认 `opencode-go`），且至少配置一个 DeepSeek 系列模型（模型 id 以 `deepseek` 开头）。
 - 已安装并正在写会话状态的 billion-context。
+- DSH 0.2.1-rc.5 及以上、0.3.0 以下。
 - Node.js 20 及以上。
 
-## 安装到 DSH profile（本地开发）
+## 从 npm 安装
+
+```bash
+dsh plugin add dsh-opencode-go-router --profile <profile>
+```
+
+也可以在 DSH 插件管理器的「添加插件」框里填入 `dsh-opencode-go-router`。包内声明了 `dsh.bundle.patch`，正常安装会创建 `opencode-router` 行；不要再往 profile 里手动加一条独立行。
+
+## 从本地仓库安装（开发）
 
 1. 把本仓库放在稳定位置，例如 `C:/Users/me/DSHs/opencode-router`。
 2. 在 profile 的 `package.json` 里：
-   - 把包加入 `dsh.profile.bundles`；
-   - 在 `dependencies` 里加入 `"opencode-router": "link:C:/Users/me/DSHs/opencode-router"`。
-3. 让 profile 的 `node_modules/opencode-router` 指向本仓库（Windows 下目录 junction 或 symlink 均可）。
+   - 把 `dsh-opencode-go-router` 加入 `dsh.profile.bundles`；
+   - 在 `dependencies` 里加入 `"dsh-opencode-go-router": "link:C:/Users/me/DSHs/opencode-router"`。
+3. 让 profile 的 `node_modules/dsh-opencode-go-router` 指向本仓库（Windows 下目录 junction 或 symlink 均可）。
 4. **不要**再往 profile 的 `cordis.patch.yml` 里手动加本插件的独立行。包内已声明 `dsh.bundle.patch: ./cordis.patch.yml`，由它插入插件行；不带 `insert` 的 profile 行只是覆盖项，创建不了插件行。
-5. 重启 DSH。插件管理器里 `opencode-router` 应显示为 profile bundle，并有一行 `include:opencode-router`。如果宿主在 bundle 声明存在之前就已经启动，用插件管理器重新加载，或重启 DSH。
+5. 重启 DSH。插件管理器里 `dsh-opencode-go-router` 应显示为 profile bundle，并有一行 `include:opencode-router`。如果宿主在 bundle 声明存在之前就已经启动，用插件管理器重新加载，或重启 DSH。
 6. 访问 `http://127.0.0.1:<DSH Web 端口>/opencode-router/status` 查看实时状态。
 
 要改默认值，在 profile 的 `cordis.patch.yml` 里按行 id 覆盖：

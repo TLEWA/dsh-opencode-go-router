@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags-ignore: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22, 24]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Syntax check
+        run: npm run check
+
+      - name: Test
+        run: npm test
+
+      - name: Pack and verify the tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARBALL="$(npm pack --silent | tail -n 1)"
+          test -f "$TARBALL"
+          tar -tzf "$TARBALL" | sort > package-contents.txt
+          cat package-contents.txt
+          for entry in \
+            package/package.json \
+            package/lib/index.js \
+            package/lib/impl.js \
+            package/cordis.patch.yml \
+            package/README.md \
+            package/README.zh-CN.md \
+            package/CHANGELOG.md \
+            package/CHANGELOG.en.md \
+            package/LICENSE; do
+            grep -qx "$entry" package-contents.txt || {
+              echo "::error::missing $entry in the package tarball"
+              exit 1
+            }
+          done
+
+      - name: Upload the package
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 22
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-opencode-go-router
+          path: dsh-opencode-go-router-*.tgz
+          if-no-files-found: error
+          retention-days: 14

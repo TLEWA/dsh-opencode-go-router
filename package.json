@@ -1,36 +1,64 @@
 {
-  "name": "opencode-router",
+  "name": "dsh-opencode-go-router",
   "version": "0.1.5",
-  "description": "Rotate OpenCode routing when billion-context compression loses the reusable prefix cache and recent calls are slow.",
+  "description": "DeepSeek Harness plugin: rotate OpenCode Go routing after billion-context cache-losing folds or system-prompt rewrites.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
-    ".": "./lib/index.js"
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
   },
   "files": [
     "lib",
     "cordis.patch.yml",
     "README.md",
-    "README.zh-CN.md"
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "CHANGELOG.en.md",
+    "LICENSE"
   ],
   "dsh": {
+    "manifestVersion": 1,
+    "engines": {
+      "dsh": ">=0.2.1-rc.5 <0.3.0-0"
+    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
   },
-  "scripts": {
-    "test": "node --test"
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "opencode-go",
+    "billion-context",
+    "prompt-cache",
+    "cache",
+    "routing",
+    "session"
+  ],
+  "author": "TLEWA",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TLEWA/dsh-opencode-go-router.git"
+  },
+  "homepage": "https://github.com/TLEWA/dsh-opencode-go-router#readme",
+  "bugs": {
+    "url": "https://github.com/TLEWA/dsh-opencode-go-router/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "engines": {
     "node": ">=20"
   },
-  "keywords": [
-    "dsh",
-    "dsh-plugin",
-    "opencode",
-    "billion-context",
-    "prompt-cache",
-    "routing"
-  ],
-  "license": "MIT"
+  "scripts": {
+    "check": "node --check lib/index.js && node --check lib/core.js && node --check lib/impl.js && node --check lib/monitor.js && node --check lib/store.js && node --check test/core.test.js && node --check test/impl.test.js && node --check test/monitor.test.js && node --check test/store.test.js",
+    "test": "node --test",
+    "prepack": "npm run check && npm test",
+    "prepublishOnly": "npm run check && npm test"
+  }
 }
