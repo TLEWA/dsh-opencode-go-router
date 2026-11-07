@@ -1,0 +1,135 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  biliSessionKey,
+  biliStatePathCandidates,
+  cacheCondition,
+  decideRotation,
+  DEFAULTS,
+  extractFolds,
+  isTargetRequest,
+  maxFoldSeq,
+  newRoutingId,
+  normalizeConfig,
+  normalizeFolds,
+  performanceCondition,
+  summarizeSamples,
+} from '../lib/core.js';
+
+test('normalizeConfig applies defaults and clamps', () => {
+  const config = normalizeConfig({
+    foldsWindow: 0,
+    cacheHitThresholdPct: 500,
+    sampleSize: 0,
+    requestCheckDelaysMs: [10, -1, 'x', 20],
+  });
+  assert.equal(config.enabled, true);
+  assert.equal(config.foldsWindow, 1);
+  assert.equal(config.cacheHitThresholdPct, 100);
+  assert.equal(config.sampleSize, 1);
+  assert.deepEqual(config.requestCheckDelaysMs, [10, 20]);
+  assert.equal(config.cacheHitThresholdPct, 100);
+  assert.equal(config.statePath.endsWith(path.join('storages', 'opencode-router', 'state.json')), true);
+});
+
+test('isTargetRequest filters provider and optional model list', () => {
+  const config = normalizeConfig({ providers: ['opencode-go'], models: ['deepseek-v4.1-flash'] });
+  assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'deepseek-v4.1-flash' }, config), true);
+  assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'other' }, config), false);
+  assert.equal(isTargetRequest({ provider: 'other', model: 'deepseek-v4.1-flash' }, config), false);
+  assert.equal(isTargetRequest({ provider: 'opencode-go' }, normalizeConfig({ enabled: false })), false);
+});
+
+test('bili session key and state path follow billion-context naming', () => {
+  const sessionId = 'session-42fe5de7-03a3-4628-a004-214ee16de663';
+  assert.equal(biliSessionKey(sessionId), '464de517e9950a59429e9a25');
+  const config = normalizeConfig({ biliSessionsDir: 'C:/tmp/bili' });
+  const candidates = biliStatePathCandidates(sessionId, config);
+  assert.equal(candidates[0].replace(/\\/g, '/'), 'C:/tmp/bili/openai/opencode.ai_464de517e9950a59429e9a25.json');
+});
+
+test('normalizeFolds dedupes, sorts and preserves unknown hit values', () => {
+  const folds = normalizeFolds([
+    { seq: 2, hPct: 3.5, at: 20 },
+    { seq: 1, hPct: 0 },
+    { seq: 1, hPct: 80 },
+    { seq: 3, hPct: null },
+    { hPct: 4 },
+  ]);
+  assert.deepEqual(folds.map((fold) => fold.seq), [1, 2, 3, 5]);
+  assert.equal(folds[0].hPct, 80);
+  assert.equal(folds[2].hPct, null);
+  assert.equal(folds[3].hPct, 4);
+  assert.equal(folds[0].at, 0);
+});
+
+test('extractFolds accepts the outer payload and top-level shape', () => {
+  const payload = { payload: { metadata: { cacheLedger: { folds: [{ seq: 1, hPct: 2, at: 5 }] } } } };
+  const top = { metadata: { cacheLedger: { folds: [{ seq: 2, hPct: 3, at: 6 }] } } };
+  assert.equal(extractFolds(payload).length, 1);
+  assert.equal(extractFolds(top)[0].seq, 2);
+  assert.equal(maxFoldSeq(extractFolds(top)), 2);
+});
+
+test('cacheCondition uses the latest folds window', () => {
+  const config = normalizeConfig({ foldsWindow: 2, cacheHitThresholdPct: 5 });
+  assert.equal(cacheCondition([{ seq: 1, hPct: 0 }, { seq: 2, hPct: 4 }], config).bad, true);
+  assert.equal(cacheCondition([{ seq: 1, hPct: 0 }, { seq: 2, hPct: 6 }], config).bad, false);
+  assert.equal(cacheCondition([{ seq: 1, hPct: 0 }], config).bad, false);
+  assert.equal(cacheCondition([{ seq: 1, hPct: null }, { seq: 2, hPct: 0 }], config).bad, false);
+});
+
+test('summarizeSamples averages the last N valid samples', () => {
+  const summary = summarizeSamples([
+    { ttftMs: 1000, tps: 100 },
+    { ttftMs: 2000, tps: 50 },
+    { ttftMs: -1, tps: 50 },
+    { ttftMs: 3000, tps: 0 },
+    { ttftMs: 4000, tps: 25 },
+  ], 2);
+  assert.equal(summary.count, 2);
+  assert.equal(summary.avgTtftMs, 3000);
+  assert.equal(summary.avgTps, 37.5);
+});
+
+test('performanceCondition requires five samples by default', () => {
+  const config = normalizeConfig({ sampleSize: 5, ttftThresholdMs: 20000, throughputThresholdTps: 60 });
+  const slow = Array.from({ length: 5 }, () => ({ ttftMs: 25000, tps: 100 }));
+  const slowResult = performanceCondition(slow, config);
+  assert.equal(slowResult.bad, true);
+  assert.equal(slowResult.reason, 'ttft-high');
+
+  const slowTps = Array.from({ length: 5 }, () => ({ ttftMs: 1000, tps: 10 }));
+  const tpsResult = performanceCondition(slowTps, config);
+  assert.equal(tpsResult.bad, true);
+  assert.equal(tpsResult.reason, 'throughput-low');
+
+  const good = Array.from({ length: 5 }, () => ({ ttftMs: 1000, tps: 100 }));
+  assert.equal(performanceCondition(good, config).bad, false);
+  assert.equal(performanceCondition(good.slice(0, 4), config).bad, false);
+  assert.equal(performanceCondition(good.slice(0, 4), normalizeConfig({ requireFullSamples: false })).bad, false);
+});
+
+test('decideRotation requires both cache and performance problems', () => {
+  const config = normalizeConfig({ sampleSize: 5, cacheHitThresholdPct: 5 });
+  const slow = Array.from({ length: 5 }, () => ({ ttftMs: 25000, tps: 10 }));
+  const badCache = [{ seq: 1, hPct: 0 }];
+  const goodCache = [{ seq: 1, hPct: 90 }];
+  assert.equal(decideRotation({ previousFolds: badCache, samples: slow, config }).rotate, true);
+  assert.equal(decideRotation({ previousFolds: goodCache, samples: slow, config }).rotate, false);
+  assert.equal(decideRotation({
+    previousFolds: badCache,
+    samples: Array.from({ length: 5 }, () => ({ ttftMs: 1000, tps: 100 })),
+    config,
+  }).rotate, false);
+});
+
+test('newRoutingId has the requested shape', () => {
+  const id = newRoutingId('ses_');
+  assert.match(id, /^ses_[0-9a-f]{24}$/);
+  assert.notEqual(id, newRoutingId('ses_'));
+  assert.equal(DEFAULTS.cacheHitThresholdPct, 5);
+});

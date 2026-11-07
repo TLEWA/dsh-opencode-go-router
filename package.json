@@ -1,0 +1,30 @@
+{
+  "name": "opencode-router",
+  "version": "0.1.0",
+  "description": "Rotate OpenCode routing when billion-context compression loses the reusable prefix cache and recent calls are slow.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "files": [
+    "lib",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "opencode",
+    "billion-context",
+    "prompt-cache",
+    "routing"
+  ],
+  "license": "MIT"
+}
