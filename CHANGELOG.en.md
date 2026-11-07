@@ -12,6 +12,11 @@ All notable changes to this project are documented here. Versioning follows
 - Exposes a top-level `history` array from the status route; routes written by older versions are backfilled as `backfilled` rows.
 - Adds the client bundle (`dsh.client`) and a registration test.
 
+### Fixed
+
+- The settings-page trigger summary no longer shows the throughput threshold as `?`.
+- The `cordis.patch.yml` insert name now matches the npm package name so the Host does not skip the client `dsh.client` declaration.
+
 ## [0.1.6] - 2026-11-08
 
 ### Fixed

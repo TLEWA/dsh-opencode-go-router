@@ -2,4 +2,4 @@
 # Defaults live in lib/core.js; override them by id in the profile cordis.patch.yml.
 - insert:
     - id: opencode-router
-      name: 'opencode-router'
+      name: 'dsh-opencode-go-router'

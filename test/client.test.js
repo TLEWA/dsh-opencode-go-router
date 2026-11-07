@@ -64,3 +64,63 @@ test('client bundle registers the settings panel under both bundle names', () =>
   assert.equal(registrations[0].component, registrations[1].component);
   assert.equal(typeof registrations[0].component, 'function');
 });
+
+test('the performance panel shows the configured throughput threshold', () => {
+  const source = fs.readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
+  let definition = null;
+  const React = {
+    createElement(type, props, ...children) {
+      return { type, props: props || {}, children };
+    },
+    useState(value) {
+      if (this.calls === undefined) this.calls = 0;
+      this.calls += 1;
+      if (this.calls === 1) {
+        return [{
+          loading: false,
+          error: '',
+          data: {
+            version: '0.2.0',
+            config: { cacheHitThresholdPct: 25, ttftThresholdMs: 12000, throughputThresholdTps: 60 },
+            history: [],
+          },
+        }, () => {}];
+      }
+      return [value, () => {}];
+    },
+    useEffect() {},
+  };
+  const context = {
+    window: { __ModuleLoader__: { load(value) { definition = value; } } },
+    console,
+    setTimeout,
+    clearTimeout,
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+  };
+  vm.runInNewContext(source, context, { filename: 'lib/client.js' });
+  const module = definition.factory(() => React);
+  const registrations = [];
+  const locales = [];
+  module.apply({
+    effect(fn) { fn(); },
+    locale: { register(namespace, dictionaries) { locales.push(dictionaries); return () => {}; } },
+    slots: {
+      inject(name, callback) { for (const item of callback()) registrations.push(item); },
+      register(options, component) { return { options, component }; },
+    },
+  });
+
+  const tree = registrations[0].component({
+    view: 'page',
+    t: (key) => locales[0].zh[key] || key,
+  });
+  const texts = [];
+  const walk = (node) => {
+    if (node == null) return;
+    if (Array.isArray(node)) { for (const item of node) walk(item); return; }
+    if (typeof node === 'string' || typeof node === 'number') { texts.push(String(node)); return; }
+    walk(node.children);
+  };
+  walk(tree);
+  assert.ok(texts.some((text) => text.includes('吞吐 ≤ 60 tok/s')), texts.join('\n'));
+});
