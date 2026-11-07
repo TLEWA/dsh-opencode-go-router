@@ -183,7 +183,6 @@ test('mount wires request headers and stream hooks through a fake cordis context
   await mount(ctx, {
     enabled: true,
     statePath,
-    preFoldHookPath: path.join(dir, 'pre-fold-hook.json'),
     pollIntervalMs: 60000,
     biliSessionsDir: path.join(dir, 'missing-sessions'),
   });
@@ -204,9 +203,6 @@ test('mount wires request headers and stream hooks through a fake cordis context
   assert.equal(liveStatus.routing.lastAppliedSessionId, 's1');
   assert.equal(liveStatus.routing.lastAppliedValue, 'ses_mounted');
   assert.equal(liveStatus.eligibility.modelPrefix, 'deepseek');
-  assert.equal(liveStatus.preFoldHook.listening, true);
-  assert.equal(liveStatus.preFoldHook.requests, 0);
-  assert.equal(fs.existsSync(liveStatus.preFoldHook.path), true);
   assert.equal(Array.isArray(liveStatus.history), true);
   assert.equal(liveStatus.history.length, 1);
   assert.equal(liveStatus.history[0].backfilled, true);
@@ -247,9 +243,7 @@ test('mount wires request headers and stream hooks through a fake cordis context
   )) chunks.push(chunk.type);
   assert.deepEqual(chunks, ['text-delta', 'usage', 'finish']);
 
-  const hookPath = liveStatus.preFoldHook.path;
   for (const disposer of disposers) disposer();
   await delay(20);
-  assert.equal(fs.existsSync(hookPath), false);
   fs.rmSync(dir, { recursive: true, force: true });
 });

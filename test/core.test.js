@@ -6,19 +6,23 @@ import path from 'node:path';
 import {
   biliSessionKey,
   biliStatePathCandidates,
-  cacheCondition,
+  CACHE_WARM_HIT_PCT,
   consecutiveFailedSwitches,
-  decideRotation,
   DEFAULTS,
+  DEFAULT_PREFILL_MIN_TOKENS,
   extractFolds,
   historyEntryFailed,
+  isFullPrefill,
   isTargetRequest,
   maxFoldSeq,
   newRoutingId,
   normalizeConfig,
   normalizeFolds,
   performanceCondition,
+  predictCacheHit,
+  promptTokens,
   rotationThresholds,
+  sampleCacheHitPct,
   summarizeSamples,
   systemPromptFingerprint,
   systemPromptText,
@@ -26,31 +30,26 @@ import {
 
 test('normalizeConfig applies defaults and clamps', () => {
   const config = normalizeConfig({
-    foldsWindow: 0,
     cacheHitThresholdPct: 500,
     sampleSize: 0,
     requestCheckDelaysMs: [10, -1, 'x', 20],
   });
   assert.equal(config.enabled, true);
   assert.equal(normalizeConfig({}).cacheHitThresholdPct, 25);
-  assert.equal(config.foldsWindow, 1);
   assert.equal(config.cacheHitThresholdPct, 100);
   assert.equal(config.sampleSize, 1);
   assert.equal(normalizeConfig({}).ttftThresholdMs, 12000);
   assert.equal(normalizeConfig({}).stepTtftGraceMs, 2000);
   assert.equal(normalizeConfig({}).stepThroughputGraceTps, 5);
-  assert.equal(normalizeConfig({}).systemRewriteBypassCache, true);
-  assert.equal(normalizeConfig({ systemRewriteBypassCache: false }).systemRewriteBypassCache, false);
-  assert.equal(normalizeConfig({}).foldRotationMode, 'defer');
-  assert.equal(normalizeConfig({ foldRotationMode: 'IMMEDIATE' }).foldRotationMode, 'immediate');
-  assert.equal(normalizeConfig({ foldRotationMode: 'off' }).foldRotationMode, 'off');
-  assert.equal(normalizeConfig({ foldRotationMode: 'bogus' }).foldRotationMode, 'defer');
-  assert.equal(normalizeConfig({ foldDeferIdleMs: -5 }).foldDeferIdleMs, 0);
-  assert.equal(normalizeConfig({ foldDeferMaxRequests: 2.6 }).foldDeferMaxRequests, 3);
-  assert.equal(normalizeConfig({}).preFoldHook, true);
-  assert.equal(normalizeConfig({ preFoldHook: false }).preFoldHook, false);
-  assert.equal(normalizeConfig({}).preFoldHookPath.endsWith(path.join('storages', 'opencode-router', 'pre-fold-hook.json')), true);
-  assert.equal(normalizeConfig({ preFoldHookPath: '~/custom-hook.json' }).preFoldHookPath, path.join(os.homedir(), 'custom-hook.json'));
+  assert.equal(normalizeConfig({}).predictiveRotation, true);
+  assert.equal(normalizeConfig({ predictiveRotation: false }).predictiveRotation, false);
+  assert.equal(normalizeConfig({ predictiveRotation: 'nope' }).predictiveRotation, true);
+  assert.equal(normalizeConfig({}).cacheTtlMs, 3600000);
+  assert.equal(normalizeConfig({ cacheTtlMs: -5 }).cacheTtlMs, 0);
+  assert.equal(normalizeConfig({ cacheTtlMs: 1e12 }).cacheTtlMs, 604800000);
+  assert.equal(normalizeConfig({ prefillMinTokens: -5 }).prefillMinTokens, 0);
+  assert.equal(normalizeConfig({ prefillMinTokens: 4000.6 }).prefillMinTokens, 4001);
+  assert.equal(normalizeConfig({}).prefillMinTokens, DEFAULT_PREFILL_MIN_TOKENS);
   assert.deepEqual(config.requestCheckDelaysMs, [10, 20]);
   assert.equal(config.statePath.endsWith(path.join('storages', 'opencode-router', 'state.json')), true);
 });
@@ -126,18 +125,95 @@ test('extractFolds accepts the outer payload and top-level shape', () => {
   assert.equal(maxFoldSeq(extractFolds(top)), 2);
 });
 
-test('cacheCondition uses the latest folds window', () => {
-  const config = normalizeConfig({ foldsWindow: 2, cacheHitThresholdPct: 5 });
-  assert.equal(cacheCondition([{ seq: 1, hPct: 0 }, { seq: 2, hPct: 4 }], config).bad, true);
-  assert.equal(cacheCondition([{ seq: 1, hPct: 0 }, { seq: 2, hPct: 6 }], config).bad, false);
-  assert.equal(cacheCondition([{ seq: 1, hPct: 0 }], config).bad, false);
-  assert.equal(cacheCondition([{ seq: 1, hPct: null }, { seq: 2, hPct: 0 }], config).bad, false);
+test('promptTokens and sampleCacheHitPct read the usage fields', () => {
+  assert.equal(promptTokens({ inputTokens: 100, cacheReadTokens: 900 }), 1000);
+  assert.equal(promptTokens({ inputTokens: 100 }), 100);
+  assert.equal(promptTokens(null), 0);
+  assert.equal(sampleCacheHitPct({ inputTokens: 100, cacheReadTokens: 900 }), 90);
+  assert.equal(sampleCacheHitPct({ hitPct: 12.34, inputTokens: 0, cacheReadTokens: 0 }), 12.34);
+  assert.equal(sampleCacheHitPct({ hitPct: 250 }), 100);
+  assert.equal(sampleCacheHitPct({ inputTokens: 0, cacheReadTokens: 0 }), null);
+  assert.equal(sampleCacheHitPct(null), null);
 });
 
-test('cache threshold default is 25 percent and inclusive', () => {
+test('isFullPrefill only credits a large, cold prompt', () => {
   const config = normalizeConfig({});
-  assert.equal(cacheCondition([{ seq: 1, hPct: 25 }], config).bad, true);
-  assert.equal(cacheCondition([{ seq: 1, hPct: 25.1 }], config).bad, false);
+  assert.equal(isFullPrefill({ inputTokens: 80000, cacheReadTokens: 0 }, config), true);
+  assert.equal(isFullPrefill({ inputTokens: 100, cacheReadTokens: 0 }, config), false);
+  assert.equal(isFullPrefill({ inputTokens: 1000, cacheReadTokens: 9000 }, config), false);
+  assert.equal(isFullPrefill({ inputTokens: 4000, cacheReadTokens: 0 }, config), true);
+  assert.equal(isFullPrefill({ inputTokens: 3999, cacheReadTokens: 0 }, config), false);
+  assert.equal(isFullPrefill({ inputTokens: 80000, cacheReadTokens: 0 }, normalizeConfig({ prefillMinTokens: 0 })), true);
+});
+
+test('predictCacheHit prefers prefix changes over any measured hit', () => {
+  const config = normalizeConfig({});
+  const warm = [{ inputTokens: 1000, cacheReadTokens: 99000, hitPct: 99 }];
+  const cold = predictCacheHit({ samples: warm, config, systemChanged: true });
+  assert.equal(cold.cold, true);
+  assert.equal(cold.expectedPct, 0);
+  assert.equal(cold.basis, 'system-rewrite');
+  assert.equal(predictCacheHit({ samples: warm, config, historyShrank: true }).basis, 'history-compacted');
+  assert.equal(predictCacheHit({ samples: warm, config }).basis, 'warm-history');
+  assert.equal(predictCacheHit({ samples: warm, config }).cold, false);
+});
+
+test('predictCacheHit does not rotate on missing data', () => {
+  const config = normalizeConfig({});
+  const none = predictCacheHit({ samples: [], config });
+  assert.equal(none.cold, false);
+  assert.equal(none.expectedPct, null);
+  assert.equal(none.basis, 'no-history');
+  const unknown = predictCacheHit({ samples: [{ ttftMs: 1, tps: 1 }], config });
+  assert.equal(unknown.cold, false);
+  assert.equal(unknown.expectedPct, null);
+  assert.equal(unknown.basis, 'no-cache-data');
+});
+
+test('predictCacheHit treats a long idle gap as an expired cache', () => {
+  const config = normalizeConfig({ cacheTtlMs: 3600000 });
+  const warm = [{ inputTokens: 1000, cacheReadTokens: 99000, hitPct: 99 }];
+  assert.equal(predictCacheHit({ samples: warm, config, idleMs: 3599999 }).cold, false);
+  const expired = predictCacheHit({ samples: warm, config, idleMs: 3600000 });
+  assert.equal(expired.cold, true);
+  assert.equal(expired.expectedPct, 0);
+  assert.equal(expired.basis, 'idle-expired');
+  assert.equal(predictCacheHit({ samples: warm, config: normalizeConfig({ cacheTtlMs: 0 }), idleMs: 1e9 }).cold, false);
+});
+
+test('predictCacheHit keeps the fold rebuild prefix warm', () => {
+  const config = normalizeConfig({});
+  const rebuild = [{ inputTokens: 80000, cacheReadTokens: 0, hitPct: 0 }];
+  const withFold = predictCacheHit({ samples: rebuild, config, foldEvidence: true });
+  assert.equal(withFold.cold, false);
+  assert.equal(withFold.expectedPct, 100);
+  assert.equal(withFold.basis, 'fold-rebuild-prefilled');
+  const noFold = predictCacheHit({ samples: rebuild, config });
+  assert.equal(noFold.cold, false);
+  assert.equal(noFold.basis, 'prefilled');
+});
+
+test('predictCacheHit rotates when the last measured hit stays low', () => {
+  const config = normalizeConfig({ cacheHitThresholdPct: 25 });
+  const low = [{ inputTokens: 1000, cacheReadTokens: 100, hitPct: 9.09 }];
+  const decision = predictCacheHit({ samples: low, config });
+  assert.equal(decision.cold, true);
+  assert.equal(decision.basis, 'cache-miss-persists');
+  assert.equal(decision.expectedPct, 9.1);
+  const at25 = predictCacheHit({ samples: [{ inputTokens: 75, cacheReadTokens: 25 }], config });
+  assert.equal(at25.cold, true);
+  const partial = predictCacheHit({ samples: [{ inputTokens: 600, cacheReadTokens: 400 }], config });
+  assert.equal(partial.cold, false);
+  assert.equal(partial.basis, 'partial-cache');
+});
+
+test('predictCacheHit uses the warm threshold constant', () => {
+  const config = normalizeConfig({});
+  assert.equal(CACHE_WARM_HIT_PCT, 80);
+  const at80 = predictCacheHit({ samples: [{ inputTokens: 20, cacheReadTokens: 80 }], config });
+  assert.equal(at80.basis, 'warm-history');
+  const at79 = predictCacheHit({ samples: [{ inputTokens: 21, cacheReadTokens: 79 }], config });
+  assert.equal(at79.basis, 'partial-cache');
 });
 
 test('summarizeSamples averages the last N valid samples', () => {
@@ -229,30 +305,6 @@ test('consecutiveFailedSwitches counts completed bad windows and stops at a good
   // An in-flight window is skipped, so earlier failures still count.
   assert.equal(consecutiveFailedSwitches([bad(1), bad(2), { sessionId: 's', at: 3, afterComplete: false }], 's', config), 2);
   assert.equal(consecutiveFailedSwitches([bad(1), { sessionId: 'other', at: 2, afterComplete: true, afterTtftMs: 25000, afterTps: 10 }], 's', config), 1);
-});
-
-test('decideRotation applies the stepped performance threshold', () => {
-  const config = normalizeConfig({ sampleSize: 5, cacheHitThresholdPct: 5 });
-  const badCache = [{ seq: 1, hPct: 0 }];
-  const at13s = Array.from({ length: 5 }, () => ({ ttftMs: 13000, tps: 100 }));
-  assert.equal(decideRotation({ previousFolds: badCache, samples: at13s, config }).rotate, true);
-  assert.equal(decideRotation({ previousFolds: badCache, samples: at13s, config, consecutiveFailures: 1 }).rotate, false);
-  const at14s = Array.from({ length: 5 }, () => ({ ttftMs: 14000, tps: 100 }));
-  assert.equal(decideRotation({ previousFolds: badCache, samples: at14s, config, consecutiveFailures: 1 }).rotate, true);
-});
-
-test('decideRotation requires both cache and performance problems', () => {
-  const config = normalizeConfig({ sampleSize: 5, cacheHitThresholdPct: 5 });
-  const slow = Array.from({ length: 5 }, () => ({ ttftMs: 25000, tps: 10 }));
-  const badCache = [{ seq: 1, hPct: 0 }];
-  const goodCache = [{ seq: 1, hPct: 90 }];
-  assert.equal(decideRotation({ previousFolds: badCache, samples: slow, config }).rotate, true);
-  assert.equal(decideRotation({ previousFolds: goodCache, samples: slow, config }).rotate, false);
-  assert.equal(decideRotation({
-    previousFolds: badCache,
-    samples: Array.from({ length: 5 }, () => ({ ttftMs: 1000, tps: 100 })),
-    config,
-  }).rotate, false);
 });
 
 test('newRoutingId has the requested shape', () => {

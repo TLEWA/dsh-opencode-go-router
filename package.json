@@ -1,6 +1,6 @@
 {
   "name": "dsh-opencode-go-router",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "DeepSeek Harness plugin: rotate OpenCode Go routing after billion-context cache-losing folds or system-prompt rewrites.",
   "type": "module",
   "main": "lib/index.js",
@@ -11,7 +11,6 @@
   },
   "files": [
     "lib",
-    "scripts",
     "cordis.patch.yml",
     "README.md",
     "README.zh-CN.md",
@@ -65,7 +64,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "check": "node --check lib/index.js && node --check lib/core.js && node --check lib/impl.js && node --check lib/monitor.js && node --check lib/prefold.js && node --check lib/store.js && node --check lib/client.js && node --check scripts/patch-billion-context.mjs && node --check test/core.test.js && node --check test/impl.test.js && node --check test/monitor.test.js && node --check test/prefold.test.js && node --check test/patch.test.js && node --check test/store.test.js && node --check test/client.test.js && node --check test/package.test.js",
+    "check": "node --check lib/index.js && node --check lib/core.js && node --check lib/impl.js && node --check lib/monitor.js && node --check lib/store.js && node --check lib/client.js && node --check test/core.test.js && node --check test/impl.test.js && node --check test/monitor.test.js && node --check test/store.test.js && node --check test/client.test.js && node --check test/package.test.js",
     "test": "node --test",
     "prepack": "npm run check && npm test",
     "prepublishOnly": "npm run check && npm test"

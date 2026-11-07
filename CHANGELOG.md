@@ -3,6 +3,25 @@
 本项目的所有重要变更都记录在这里，版本号遵循
 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] - 2026-11-08
+
+### 变更
+
+- 轮换改为**请求前预测缓存命中**：每条合格的 `llm/stream` 请求在发出前，插件用当时已知的信号预测这次请求的上游前缀缓存命中率；预测 `<=` `cacheHitThresholdPct`（默认 25%）且最近请求很慢时，立刻换路由 id，让新路由作用于这条请求本身。判定发生在请求发出之前，因此不会再出现“先冷一次、换路由后再冷一次”。
+- 预测依据按优先级排列：系统提示词改写、消息历史被压缩 → 0%；还没有任何样本 → 未知（不轮换）；空闲达到 `cacheTtlMs`（默认 1 小时）→ 0%；上次命中 `>=` 80% → 沿用；上次是“大前缀 + 低命中”的完整 prefill（折叠重建的特征）→ 100%，因为那次 prefill 已经把新前缀写进上游缓存；其余情况沿用上次命中，`<=` 阈值即判冷。
+- 实测依据：折叠重建请求本身是冷的（命中 0–82%），但紧随其后的请求命中 95–99%；15–60 分钟空闲仍多数命中，只有数小时级空闲才普遍变冷。0.2.x 在折叠后立即轮换确实丢掉了一次热请求，0.3.0 的预测把这些情形判为热。
+- 新增 `predictiveRotation`（默认 `true`）、`cacheTtlMs`（默认 `3600000`）、`prefillMinTokens`（默认 `4000`）。删除 `foldsWindow`、`systemRewriteBypassCache`、`foldRotationMode`、`foldDeferIdleMs`、`foldDeferMaxMs`、`foldDeferMaxRequests`；折叠账本保留为诊断证据，不再直接触发轮换。
+- 切换记录与路由的 `reason` 统一为 `predicted-cold`，并新增 `basis`（`system-rewrite` / `history-compacted` / `no-history` / `no-cache-data` / `idle-expired` / `warm-history` / `fold-rebuild-prefilled` / `prefilled` / `cache-miss-persists` / `partial-cache`）。样本新增 `inputTokens`、`cacheReadTokens`、`hitPct`。
+
+### 移除
+
+- 移除 0.4.0 的折叠前衔接：`POST /pre-fold` 端点、`preFoldHook` / `preFoldHookPath` 配置、`preflightRotations` / `lastPreflightAt` 状态，以及 `scripts/patch-billion-context.mjs`。不再需要修改 billion-context 的 `dist`；旧记录里的 `fold-preflight` 原因在设置页显示为「缓存 + 性能」。之前给 billion-context 打过补丁的机器，用同目录下的 `index.js.opencode-router.bak` 还原 `index.js`（或重装 billion-context）后重启 DSH 即可。
+
+### 状态
+
+- 状态路由新增 `lastPrediction`、`predictions`、`predictiveRotation`、`cacheHitThresholdPct`、`cacheTtlMs`、`messageCount`、`lastSample`；删除 `foldRotationMode`、`pendingRotation`、`deferredRotations`、`lastDeferredAt`、`systemRewriteRotations`、`lastSystemRewriteAt`。
+- 设置页性能记录把触发原因显示为「预测冷请求」或「系统提示词改写」。
+
 ## [0.4.0] - 2026-11-08
 
 ### 新增

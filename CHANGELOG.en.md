@@ -3,6 +3,25 @@
 All notable changes to this project are documented here. Versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-11-08
+
+### Changed
+
+- Rotation is now a **pre-request cache prediction**. Before every eligible `llm/stream` request is sent, the plugin predicts that request's upstream prefix-cache hit from the signals known at that moment; when the prediction is `<=` `cacheHitThresholdPct` (25% by default) and recent requests are slow, it rotates the routing id immediately so the new route applies to that very request. The decision happens before the request goes out, so there is no longer a cold request followed by a second cold one on the new backend.
+- Prediction inputs, in priority order: a system-prompt rewrite or a compacted message history means 0%; no measured request yet means unknown (never rotate); an idle gap of at least `cacheTtlMs` (1 hour by default) means 0%; a last hit `>=` 80% carries over; a last request that fully prefilled a large prompt with a low hit (the fold-rebuild signature) means 100%, because that prefill just cached the new prefix upstream; otherwise the last measured hit carries over and a hit `<=` the threshold is cold.
+- Measured evidence behind this: a fold-rebuild request is itself cold (0–82% hit), but the request right after it hits 95–99%; a 15–60 minute idle gap still mostly hits, and only multi-hour gaps go cold broadly. Rotating right after a fold, as 0.2.x did, threw away a warm request; the prediction treats those cases as warm.
+- New `predictiveRotation` (`true`), `cacheTtlMs` (`3600000`), and `prefillMinTokens` (`4000`). Removed `foldsWindow`, `systemRewriteBypassCache`, `foldRotationMode`, `foldDeferIdleMs`, `foldDeferMaxMs`, and `foldDeferMaxRequests`; the fold ledger stays as diagnostic evidence and no longer triggers rotation by itself.
+- Switch records and routes now use `reason: "predicted-cold"` and add `basis` (`system-rewrite` / `history-compacted` / `no-history` / `no-cache-data` / `idle-expired` / `warm-history` / `fold-rebuild-prefilled` / `prefilled` / `cache-miss-persists` / `partial-cache`). Samples add `inputTokens`, `cacheReadTokens`, and `hitPct`.
+
+### Removed
+
+- Removed the 0.4.0 pre-fold seam: the `POST /pre-fold` endpoint, the `preFoldHook` / `preFoldHookPath` settings, the `preflightRotations` / `lastPreflightAt` status fields, and `scripts/patch-billion-context.mjs`. billion-context's `dist` no longer needs patching; older `fold-preflight` records still show as **Cache + speed** on the settings page. If billion-context was patched before, restore `index.js` from `index.js.opencode-router.bak` (or reinstall billion-context) and restart DSH.
+
+### Status
+
+- The status route adds `lastPrediction`, `predictions`, `predictiveRotation`, `cacheHitThresholdPct`, `cacheTtlMs`, `messageCount`, and `lastSample`; it drops `foldRotationMode`, `pendingRotation`, `deferredRotations`, `lastDeferredAt`, `systemRewriteRotations`, and `lastSystemRewriteAt`.
+- The settings-page performance log labels the trigger as **Predicted cold** or **System rewrite**.
+
 ## [0.4.0] - 2026-11-08
 
 ### Added
