@@ -82,9 +82,10 @@ test('systemPromptText mirrors pi-ai leading system messages and fingerprints th
 test('bili session key and state path follow billion-context naming', () => {
   const sessionId = 'session-42fe5de7-03a3-4628-a004-214ee16de663';
   assert.equal(biliSessionKey(sessionId), '464de517e9950a59429e9a25');
-  const config = normalizeConfig({ biliSessionsDir: 'C:/tmp/bili' });
+  const root = path.join(os.tmpdir(), 'opencode-router-bili-path');
+  const config = normalizeConfig({ biliSessionsDir: root });
   const candidates = biliStatePathCandidates(sessionId, config);
-  assert.equal(candidates[0].replace(/\\/g, '/'), 'C:/tmp/bili/openai/opencode.ai_464de517e9950a59429e9a25.json');
+  assert.equal(candidates[0], path.join(root, 'openai', 'opencode.ai_464de517e9950a59429e9a25.json'));
 });
 
 test('normalizeFolds dedupes, sorts and preserves unknown hit values', () => {

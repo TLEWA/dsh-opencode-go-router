@@ -54,9 +54,10 @@ function setup(t, overrides = {}) {
     };
     fs.writeFileSync(stateFile, JSON.stringify(payload), 'utf8');
   };
-  t.after(() => {
+  t.after(async () => {
     monitor.dispose();
-    fs.rmSync(dir, { recursive: true, force: true });
+    await store.dispose();
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   return { config, store, monitor, stateFile, writeState, tick: async () => { clock += 2000; await monitor.tick(); } };
 }
