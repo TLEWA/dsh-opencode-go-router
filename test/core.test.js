@@ -27,6 +27,7 @@ test('normalizeConfig applies defaults and clamps', () => {
     requestCheckDelaysMs: [10, -1, 'x', 20],
   });
   assert.equal(config.enabled, true);
+  assert.equal(normalizeConfig({}).cacheHitThresholdPct, 25);
   assert.equal(config.foldsWindow, 1);
   assert.equal(config.cacheHitThresholdPct, 100);
   assert.equal(config.sampleSize, 1);
@@ -82,6 +83,12 @@ test('cacheCondition uses the latest folds window', () => {
   assert.equal(cacheCondition([{ seq: 1, hPct: null }, { seq: 2, hPct: 0 }], config).bad, false);
 });
 
+test('cache threshold default is 25 percent and inclusive', () => {
+  const config = normalizeConfig({});
+  assert.equal(cacheCondition([{ seq: 1, hPct: 25 }], config).bad, true);
+  assert.equal(cacheCondition([{ seq: 1, hPct: 25.1 }], config).bad, false);
+});
+
 test('summarizeSamples averages the last N valid samples', () => {
   const summary = summarizeSamples([
     { ttftMs: 1000, tps: 100 },
@@ -131,5 +138,5 @@ test('newRoutingId has the requested shape', () => {
   const id = newRoutingId('ses_');
   assert.match(id, /^ses_[0-9a-f]{24}$/);
   assert.notEqual(id, newRoutingId('ses_'));
-  assert.equal(DEFAULTS.cacheHitThresholdPct, 5);
+  assert.equal(DEFAULTS.cacheHitThresholdPct, 25);
 });

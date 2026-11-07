@@ -6,7 +6,7 @@
 
 ## 为什么需要它
 
-OpenCode Go 通过请求头 `x-opencode-session` 把一条会话固定到一个上游后端。billion-context 重建上下文后，重建后的第一次请求本应在同一个后端重新预热前缀；如果这次请求的缓存命中率极低，同时最近几次请求又很慢，说明当前后端对该会话很可能不合适。插件会在**下一次**折叠重建时轮换 `x-opencode-session`，让后续请求换一个后端。
+OpenCode Go 通过请求头 `x-opencode-session` 把一条会话固定到一个上游后端。billion-context 重建上下文后，重建后的第一次请求本应在同一个后端重新预热前缀；如果这次请求的缓存命中率偏低（默认 ≤25%），同时最近几次请求又很慢，说明当前后端对该会话很可能不合适。插件会在**下一次**折叠重建时轮换 `x-opencode-session`，让后续请求换一个后端。
 
 插件本身不压缩上下文，也不修改提示词或会话日志；它只改一个路由请求头，并在本地记录耗时统计。
 
@@ -44,7 +44,7 @@ OpenCode Go 通过请求头 `x-opencode-session` 把一条会话固定到一个�
 ```yaml
 - id: opencode-router
   config:
-    cacheHitThresholdPct: 5
+    cacheHitThresholdPct: 25
 ```
 
 插件入口在每次 `apply` 时用带时间戳的查询串重新加载 `lib/impl.js`，所以改实现并碰一下插件配置通常就能生效；但 `lib/core.js`、`lib/store.js`、`lib/monitor.js` 的改动仍需要完整重启 DSH（Node 会缓存这些静态 import）。
@@ -56,7 +56,7 @@ OpenCode Go 通过请求头 `x-opencode-session` 把一条会话固定到一个�
 | `enabled` | `true` | 总开关；false 时钩子直接透传，监控器不启动。 |
 | `providers` | `["opencode-go"]` | 参与路由的 provider。 |
 | `models` | `[]` | 可选模型白名单；空表示该 provider 的所有模型。 |
-| `cacheHitThresholdPct` | `5` | 折叠的 `hPct <= 该值` 视为丢缓存。 |
+| `cacheHitThresholdPct` | `25` | 折叠的 `hPct <= 该值` 视为丢缓存。 |
 | `foldsWindow` | `1` | 最近多少次折叠都必须低于缓存阈值。 |
 | `ttftThresholdMs` | `20000` | 平均首内容 token 时间达到该值算慢。 |
 | `throughputThresholdTps` | `60` | 平均输出 tok/s 低于等于该值算慢。 |

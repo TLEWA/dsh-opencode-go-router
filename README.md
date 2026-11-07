@@ -6,7 +6,7 @@ A DeepSeek Harness (DSH) host plugin that gives an OpenCode Go conversation a fr
 
 ## Why
 
-OpenCode Go pins a conversation to one upstream backend with the `x-opencode-session` request header. After billion-context rebuilds the context, the next request normally warms a new prefix on that same backend. If the first request after a rebuild reports an extremely low cache hit, and the last few requests are also slow, the backend is probably a bad place for this conversation. At the **next** compression rebuild this plugin rotates `x-opencode-session`, so the next request is sent to a different backend.
+OpenCode Go pins a conversation to one upstream backend with the `x-opencode-session` request header. After billion-context rebuilds the context, the next request normally warms a new prefix on that same backend. If the first request after a rebuild reports a low cache hit (25% or less by default), and the last few requests are also slow, the backend is probably a bad place for this conversation. At the **next** compression rebuild this plugin rotates `x-opencode-session`, so the next request is sent to a different backend.
 
 The plugin does not compress anything itself and does not change the prompt or the conversation log. It only changes one routing header and keeps local timing counters.
 
@@ -44,7 +44,7 @@ To change defaults, add an override by row id to the profile's `cordis.patch.yml
 ```yaml
 - id: opencode-router
   config:
-    cacheHitThresholdPct: 5
+    cacheHitThresholdPct: 25
 ```
 
 Because the plugin entry point reloads `lib/impl.js` with a cache-busting query on every `apply`, editing the implementation and touching the plugin config is usually enough to try new code. Changes to `lib/core.js`, `lib/store.js`, or `lib/monitor.js` still need a full DSH restart, because those imports are cached by Node.
@@ -56,7 +56,7 @@ Because the plugin entry point reloads `lib/impl.js` with a cache-busting query 
 | `enabled` | `true` | Master switch. When false, hooks pass through and the monitor does not run. |
 | `providers` | `["opencode-go"]` | Providers eligible for routing. |
 | `models` | `[]` | Optional model allow-list; empty means all models of the provider. |
-| `cacheHitThresholdPct` | `5` | A fold counts as "cache lost" when `hPct <= this`. |
+| `cacheHitThresholdPct` | `25` | A fold counts as "cache lost" when `hPct <= this`. |
 | `foldsWindow` | `1` | How many recent folds must all be below the cache threshold. |
 | `ttftThresholdMs` | `20000` | Average time to first content token at or above this is slow. |
 | `throughputThresholdTps` | `60` | Average output tokens/second at or below this is slow. |
