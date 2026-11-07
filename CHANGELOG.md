@@ -3,6 +3,19 @@
 本项目的所有重要变更都记录在这里，版本号遵循
 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-11-08
+
+### 新增
+
+- **折叠前衔接**：插件在 `127.0.0.1` 上启动 `POST /pre-fold` 端点并发布描述文件；可选的 billion-context 补丁在重建请求体生成后、转发前回调，插件把待切换应用到这条重建请求本身。重建本来就要冷一次，换路由与这次冷 prefill 合并，不再额外多一次冷请求。
+- 新增补丁脚本 `scripts/patch-billion-context.mjs`，支持 `--check` / `--apply` / `--revert`、自动发现 profile 内的 billion-context、幂等打补丁，并保留 `.opencode-router.bak` 备份。
+- 新增 `preFoldHook`（默认 `true`）与 `preFoldHookPath` 配置。未打补丁或关闭衔接时，插件仍使用 0.3.0 的延后路径，不会报错。
+
+### 状态
+
+- 状态路由新增 `preFoldHook`、`preflightRotations`、`lastPreflightAt`；切换历史与路由新增 `reason: "fold-preflight"`。
+- 设置页把折叠前衔接应用的切换显示为「折叠重建衔接」。
+
 ## [0.3.0] - 2026-11-08
 
 ### 变更

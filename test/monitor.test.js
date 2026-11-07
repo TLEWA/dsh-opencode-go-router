@@ -594,6 +594,113 @@ test('maxDeferRequests forces a pending rotation before the next request', async
   assert.equal(store.routeFor(sessionId).reason, 'fold-deferred');
 });
 
+test('pre-fold hook consumes a pending rotation on the rebuild request', async (t) => {
+  const { store, monitor, writeState, tick } = setup(t, { foldRotationMode: 'defer' });
+  writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await tick();
+  badSamples(store);
+  writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+  await tick();
+  assert.equal(monitor.status().pendingRotation.foldSeq, 2);
+
+  const route = await monitor.preflight();
+  assert.ok(route);
+  assert.equal(route.reason, 'fold-preflight');
+  assert.equal(route.foldSeq, 2);
+  assert.equal(store.routeFor(sessionId).reason, 'fold-preflight');
+  assert.equal(monitor.status().pendingRotation, null);
+  assert.equal(monitor.status().preflightRotations, 1);
+  assert.ok(monitor.status().lastPreflightAt);
+  assert.equal(monitor.rotations, 1);
+  const history = store.history();
+  assert.equal(history[0].reason, 'fold-preflight');
+});
+
+test('pre-fold hook picks up a fold that has not been polled yet', async (t) => {
+  const { store, monitor, writeState, tick } = setup(t, { foldRotationMode: 'defer' });
+  writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await tick();
+  badSamples(store);
+  // The rebuild has finished and billion-context wrote fold #2, but the
+  // periodic poll has not run. The hook must tick first and still switch.
+  writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+
+  const route = await monitor.preflight();
+  assert.ok(route);
+  assert.equal(route.reason, 'fold-preflight');
+  assert.equal(route.foldSeq, 2);
+  assert.equal(store.routeFor(sessionId).reason, 'fold-preflight');
+  assert.equal(monitor.status().preflightRotations, 1);
+});
+
+test('pre-fold hook does nothing without a pending rotation', async (t) => {
+  const { store, monitor } = setup(t, { foldRotationMode: 'defer' });
+  assert.equal(await monitor.preflight(), null);
+  assert.equal(store.routeFor(sessionId), null);
+  assert.equal(monitor.status().preflightRotations, 0);
+});
+
+test('pre-fold hook is inactive outside defer mode', async (t) => {
+  for (const mode of ['immediate', 'off']) {
+    const { store, monitor, writeState, tick } = setup(t, { foldRotationMode: mode });
+    writeState([{ seq: 1, hPct: 0, at: 1 }]);
+    await tick();
+    badSamples(store);
+    writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+    await tick();
+    const before = store.routeFor(sessionId);
+    assert.equal(await monitor.preflight(), null);
+    assert.deepEqual(store.routeFor(sessionId), before);
+    assert.equal(monitor.status().preflightRotations, 0);
+  }
+});
+
+test('pre-fold hook rechecks conditions and drops a stale pending switch', async (t) => {
+  const { store, monitor, writeState, tick } = setup(t, { foldRotationMode: 'defer' });
+  writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await tick();
+  badSamples(store);
+  writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+  await tick();
+  assert.ok(monitor.status().pendingRotation);
+
+  // Performance recovered before the rebuild. The hook must re-evaluate the
+  // pending decision instead of rotating on stale evidence.
+  goodSamples(store);
+  assert.equal(await monitor.preflight(), null);
+  assert.equal(store.routeFor(sessionId), null);
+  assert.equal(monitor.status().pendingRotation, null);
+});
+
+test('pre-fold hook respects target eligibility and cooldown', async (t) => {
+  const nonTarget = setup(t, { foldRotationMode: 'defer' });
+  nonTarget.writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await nonTarget.tick();
+  badSamples(nonTarget.store);
+  nonTarget.writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+  await nonTarget.tick();
+  nonTarget.monitor.setTargetActive(false);
+  assert.equal(await nonTarget.monitor.preflight(), null);
+  assert.equal(nonTarget.store.routeFor(sessionId), null);
+
+  const cooled = setup(t, { foldRotationMode: 'defer', minRotationGapMs: 60000 });
+  cooled.writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await cooled.tick();
+  badSamples(cooled.store);
+  cooled.writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+  await cooled.tick();
+  assert.ok(cooled.monitor.status().pendingRotation);
+  // A switch that happened just now must gate the pending one.
+  cooled.store.setRoute(sessionId, {
+    value: 'ses_existing',
+    rotatedAt: cooled.now(),
+    foldSeq: null,
+    reason: 'test',
+  });
+  assert.equal(await cooled.monitor.preflight(), null);
+  assert.equal(cooled.store.routeFor(sessionId).value, 'ses_existing');
+});
+
 test('discovers a state file when the host label has changed', async (t) => {
   const { config, monitor, stateFile, writeState, tick } = setup(t);
   const key = biliSessionKey(sessionId);

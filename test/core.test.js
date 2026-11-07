@@ -47,6 +47,10 @@ test('normalizeConfig applies defaults and clamps', () => {
   assert.equal(normalizeConfig({ foldRotationMode: 'bogus' }).foldRotationMode, 'defer');
   assert.equal(normalizeConfig({ foldDeferIdleMs: -5 }).foldDeferIdleMs, 0);
   assert.equal(normalizeConfig({ foldDeferMaxRequests: 2.6 }).foldDeferMaxRequests, 3);
+  assert.equal(normalizeConfig({}).preFoldHook, true);
+  assert.equal(normalizeConfig({ preFoldHook: false }).preFoldHook, false);
+  assert.equal(normalizeConfig({}).preFoldHookPath.endsWith(path.join('storages', 'opencode-router', 'pre-fold-hook.json')), true);
+  assert.equal(normalizeConfig({ preFoldHookPath: '~/custom-hook.json' }).preFoldHookPath, path.join(os.homedir(), 'custom-hook.json'));
   assert.deepEqual(config.requestCheckDelaysMs, [10, 20]);
   assert.equal(config.statePath.endsWith(path.join('storages', 'opencode-router', 'state.json')), true);
 });
