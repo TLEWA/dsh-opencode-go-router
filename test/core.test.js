@@ -31,17 +31,27 @@ test('normalizeConfig applies defaults and clamps', () => {
   assert.equal(config.foldsWindow, 1);
   assert.equal(config.cacheHitThresholdPct, 100);
   assert.equal(config.sampleSize, 1);
+  assert.equal(normalizeConfig({}).ttftThresholdMs, 12000);
   assert.deepEqual(config.requestCheckDelaysMs, [10, 20]);
-  assert.equal(config.cacheHitThresholdPct, 100);
   assert.equal(config.statePath.endsWith(path.join('storages', 'opencode-router', 'state.json')), true);
 });
 
-test('isTargetRequest filters provider and optional model list', () => {
-  const config = normalizeConfig({ providers: ['opencode-go'], models: ['deepseek-v4.1-flash'] });
+test('isTargetRequest only accepts OpenCode Go DeepSeek-series models', () => {
+  const config = normalizeConfig({ providers: ['opencode-go'], models: [] });
   assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'deepseek-v4.1-flash' }, config), true);
-  assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'other' }, config), false);
+  assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'DeepSeek-V4.1' }, config), true);
+  assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'deepseek-chat' }, config), true);
+  assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'claude-haiku-5-5' }, config), false);
+  assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'kimi-k3' }, config), false);
+  assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'gpt-6-luna' }, config), false);
+  assert.equal(isTargetRequest({ provider: 'opencode-go' }, config), false);
   assert.equal(isTargetRequest({ provider: 'other', model: 'deepseek-v4.1-flash' }, config), false);
-  assert.equal(isTargetRequest({ provider: 'opencode-go' }, normalizeConfig({ enabled: false })), false);
+  assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'deepseek-v4.1-flash' }, normalizeConfig({ enabled: false })), false);
+
+  const exact = normalizeConfig({ providers: ['opencode-go'], models: ['deepseek-v4.1-flash'] });
+  assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'deepseek-v4.1-flash' }, exact), true);
+  assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'deepseek-chat' }, exact), false);
+  assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'claude-haiku-5-5' }, exact), false);
 });
 
 test('bili session key and state path follow billion-context naming', () => {
@@ -102,8 +112,11 @@ test('summarizeSamples averages the last N valid samples', () => {
   assert.equal(summary.avgTps, 37.5);
 });
 
-test('performanceCondition requires five samples by default', () => {
+test('performanceCondition requires five samples and uses the 12s default', () => {
   const config = normalizeConfig({ sampleSize: 5, ttftThresholdMs: 20000, throughputThresholdTps: 60 });
+  const defaultConfig = normalizeConfig({ sampleSize: 5 });
+  assert.equal(performanceCondition(Array.from({ length: 5 }, () => ({ ttftMs: 12000, tps: 100 })), defaultConfig).bad, true);
+  assert.equal(performanceCondition(Array.from({ length: 5 }, () => ({ ttftMs: 11999, tps: 100 })), defaultConfig).bad, false);
   const slow = Array.from({ length: 5 }, () => ({ ttftMs: 25000, tps: 100 }));
   const slowResult = performanceCondition(slow, config);
   assert.equal(slowResult.bad, true);

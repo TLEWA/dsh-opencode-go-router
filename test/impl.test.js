@@ -17,13 +17,16 @@ function fakeStore(value = 'ses_rotated') {
   };
 }
 
-test('routingForRequest only matches eligible provider sessions', () => {
+test('routingForRequest only matches OpenCode Go DeepSeek sessions', () => {
   const config = normalizeConfig({});
   const store = fakeStore();
   assert.equal(routingForRequest({ provider: 'opencode-go', model: 'deepseek-v4.1-flash', sessionId: 's1' }, config, store).value, 'ses_rotated');
+  assert.equal(routingForRequest({ provider: 'opencode-go', model: 'DeepSeek-V4.1', sessionId: 's1' }, config, store).value, 'ses_rotated');
+  assert.equal(routingForRequest({ provider: 'opencode-go', model: 'claude-haiku-5-5', sessionId: 's1' }, config, store), null);
+  assert.equal(routingForRequest({ provider: 'opencode-go', model: 'kimi-k3', sessionId: 's1' }, config, store), null);
   assert.equal(routingForRequest({ provider: 'opencode-go', sessionId: 'other' }, config, store), null);
-  assert.equal(routingForRequest({ provider: 'other', sessionId: 's1' }, config, store), null);
-  assert.equal(routingForRequest({ provider: 'opencode-go', sessionId: 's1' }, normalizeConfig({ enabled: false }), store), null);
+  assert.equal(routingForRequest({ provider: 'other', model: 'deepseek-v4.1-flash', sessionId: 's1' }, config, store), null);
+  assert.equal(routingForRequest({ provider: 'opencode-go', model: 'deepseek-v4.1-flash', sessionId: 's1' }, normalizeConfig({ enabled: false }), store), null);
   assert.equal(routingForRequest({ provider: 'opencode-go' }, config, store), null);
 });
 
@@ -40,8 +43,12 @@ test('applyRoutingHeader sets and preserves the header as configured', () => {
   assert.equal(existing.get('x-opencode-session'), 'ses_original');
 
   const otherProvider = new Headers();
-  assert.equal(applyRoutingHeader({ provider: 'other', sessionId: 's1' }, otherProvider, config, fakeStore()), false);
+  assert.equal(applyRoutingHeader({ provider: 'other', model: 'deepseek-v4.1-flash', sessionId: 's1' }, otherProvider, config, fakeStore()), false);
   assert.equal(otherProvider.get('x-opencode-session'), null);
+
+  const otherModel = new Headers();
+  assert.equal(applyRoutingHeader({ provider: 'opencode-go', model: 'claude-haiku-5-5', sessionId: 's1' }, otherModel, config, fakeStore()), false);
+  assert.equal(otherModel.get('x-opencode-session'), null);
 });
 
 test('applyRoutingHeaderDetailed reports why a header was or was not set', () => {
@@ -54,9 +61,17 @@ test('applyRoutingHeaderDetailed reports why a header was or was not set', () =>
   assert.equal(applied.route.value, 'ses_rotated');
   assert.equal(headers.get('x-opencode-session'), 'ses_rotated');
 
-  const noRoute = applyRoutingHeaderDetailed({ provider: 'other', sessionId: 's1' }, new Headers(), config, fakeStore());
+  const noRoute = applyRoutingHeaderDetailed({ provider: 'other', model: 'deepseek-v4.1-flash', sessionId: 's1' }, new Headers(), config, fakeStore());
   assert.equal(noRoute.applied, false);
-  assert.equal(noRoute.reason, 'no-route');
+  assert.equal(noRoute.reason, 'not-target');
+
+  const noTargetModel = applyRoutingHeaderDetailed({ provider: 'opencode-go', model: 'claude-haiku-5-5', sessionId: 's1' }, new Headers(), config, fakeStore());
+  assert.equal(noTargetModel.applied, false);
+  assert.equal(noTargetModel.reason, 'not-target');
+
+  const disabled = applyRoutingHeaderDetailed(request, new Headers(), normalizeConfig({ enabled: false }), fakeStore());
+  assert.equal(disabled.applied, false);
+  assert.equal(disabled.reason, 'disabled');
 
   const preserve = normalizeConfig({ overrideExistingHeader: false });
   const existing = new Headers({ 'x-opencode-session': 'ses_original' });
@@ -187,6 +202,28 @@ test('mount wires request headers and stream hooks through a fake cordis context
   assert.equal(liveStatus.routing.applications, 1);
   assert.equal(liveStatus.routing.lastAppliedSessionId, 's1');
   assert.equal(liveStatus.routing.lastAppliedValue, 'ses_mounted');
+  assert.equal(liveStatus.eligibility.modelPrefix, 'deepseek');
+  assert.equal(liveStatus.sessions.find((session) => session.sessionId === 's1').targetActive, true);
+
+  const nonTargetHeaders = new Headers({ 'x-opencode-session': 'ses_original' });
+  onHeaders(
+    { provider: 'opencode-go', model: 'claude-haiku-5-5', sessionId: 's1' },
+    nonTargetHeaders,
+    () => nonTargetHeaders,
+  );
+  assert.equal(nonTargetHeaders.get('x-opencode-session'), 'ses_original');
+  const afterNonTarget = globalThis.__opencodeRouter.status();
+  assert.equal(afterNonTarget.routing.checks, 2);
+  assert.equal(afterNonTarget.routing.applications, 1);
+  assert.equal(afterNonTarget.routing.lastReason, 'not-target');
+  assert.equal(afterNonTarget.sessions.find((session) => session.sessionId === 's1').targetActive, false);
+
+  onHeaders(
+    { provider: 'opencode-go', model: 'deepseek-v4.1-flash', sessionId: 's1' },
+    new Headers(),
+    () => new Headers(),
+  );
+  assert.equal(globalThis.__opencodeRouter.status().sessions.find((session) => session.sessionId === 's1').targetActive, true);
 
   const onStream = listeners.get('llm/stream');
   assert.equal(typeof onStream, 'function');

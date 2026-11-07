@@ -137,6 +137,31 @@ test('next fold rotates when the previous fold lost cache and samples are slow',
   assert.notEqual(store.routeFor(sessionId).value, route.value);
 });
 
+test('a non-DeepSeek target state blocks rotation until a DeepSeek request returns', async (t) => {
+  const { store, monitor, writeState, tick } = setup(t);
+  writeState([{ seq: 1, hPct: 0, at: 1 }]);
+  await tick();
+  badSamples(store);
+
+  monitor.setTargetActive(false);
+  writeState([{ seq: 1, hPct: 0, at: 1 }, { seq: 2, hPct: 0, at: 2 }]);
+  await tick();
+  assert.equal(monitor.status().targetActive, false);
+  assert.equal(store.routeFor(sessionId), null);
+  assert.equal(monitor.rotations, 0);
+
+  monitor.setTargetActive(true);
+  writeState([
+    { seq: 1, hPct: 0, at: 1 },
+    { seq: 2, hPct: 0, at: 2 },
+    { seq: 3, hPct: 0, at: 3 },
+  ]);
+  await tick();
+  assert.equal(monitor.status().targetActive, true);
+  assert.ok(store.routeFor(sessionId));
+  assert.equal(monitor.rotations, 1);
+});
+
 test('rotation does not create or follow a state file keyed by the route value', async (t) => {
   const { config, store, monitor, writeState, tick } = setup(t);
   writeState([{ seq: 1, hPct: 0, at: 1 }]);

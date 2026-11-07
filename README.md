@@ -1,6 +1,6 @@
 # opencode-router
 
-A DeepSeek Harness (DSH) host plugin that gives an OpenCode Go conversation a fresh routing id when billion-context compression loses the reusable prompt cache **and** recent requests are slow.
+A DeepSeek Harness (DSH) host plugin that gives an OpenCode Go conversation using a DeepSeek-series model a fresh routing id when billion-context compression loses the reusable prompt cache **and** recent requests are slow.
 
 [中文说明](./README.zh-CN.md)
 
@@ -8,23 +8,26 @@ A DeepSeek Harness (DSH) host plugin that gives an OpenCode Go conversation a fr
 
 OpenCode Go pins a conversation to one upstream backend with the `x-opencode-session` request header. After billion-context rebuilds the context, the next request normally warms a new prefix on that same backend. If the first request after a rebuild reports a low cache hit (25% or less by default), and the last few requests are also slow, the backend is probably a bad place for this conversation. At the **next** compression rebuild this plugin rotates `x-opencode-session`, so the next request is sent to a different backend.
 
+Only OpenCode Go DeepSeek-series conversations are eligible. Other models are never routed by this plugin, even when a route exists.
+
 The plugin does not compress anything itself and does not change the prompt or the conversation log. It only changes one routing header and keeps local timing counters.
 
 ## How it works
 
 - **Cache evidence.** It reads billion-context's per-session state file (`sessions/openai/<host>_<sha256(conversationId).slice(0,24)>.json`) and looks at `metadata.cacheLedger.folds`. billion-context derives `conversationId` from the highest-priority conversation header. In a DSH setup that is `x-bili-plugin-conversation` (the DSH session id); `x-opencode-session` ranks below it, so rotating that header does **not** change the file or open a new one. A fold record's `hPct` is the cache-hit percentage of the first request sent after that rebuild.
-- **Performance evidence.** It wraps `llm/stream`, timestamps the first content chunk, and records output tokens per second at the finish chunk. It keeps the last `sampleSize` valid samples per DSH session.
-- **Decision.** On a new fold, it evaluates the folds *before* that fold. Rotation happens only when the latest `foldsWindow` fold(s) all have `hPct <= cacheHitThresholdPct` **and** the recent samples are slow (average TTFT `>=` threshold, or average throughput `<=` threshold).
+- **Eligibility.** Only requests from a configured provider (`opencode-go` by default) whose model id starts with `deepseek` (case-insensitive) are considered. `models` can narrow this to exact DeepSeek ids. Other models are ignored, and a rotation is skipped if the latest ordinary conversation request used a non-eligible model. Auxiliary requests that declare a `purpose` do not change that state.
+- **Performance evidence.** It wraps `llm/stream` only for eligible requests, timestamps the first content chunk, and records output tokens per second at the finish chunk. It keeps the last `sampleSize` valid samples per DSH session.
+- **Decision.** On a new fold, it evaluates the folds *before* that fold. Rotation happens only when the latest `foldsWindow` fold(s) all have `hPct <= cacheHitThresholdPct` **and** the recent samples are slow (average TTFT `>=` 12000 ms by default, or average throughput `<=` 60 tokens/second by default).
 - **Routing.** A persisted route maps the DSH session id to a generated `ses_...` value. The `llm-pi-ai/request-headers` waterfall runs after pi-ai assembles its header set and before the request is sent, so setting `x-opencode-session` there reaches the wire. In the reference setup a companion injector such as `dsh-opencode-ip-guard` supplies a baseline value equal to the DSH session id; when a route exists this plugin replaces it, and the injector's no-overwrite fallback leaves the value alone.
 - **No billion-context, no effect.** If the sessions directory or the session state file is absent, the monitor stays idle. The header hook has no route and does nothing. No exception is thrown into DSH.
 
-The first fold seen after a plugin start is a baseline and never causes rotation. Rotation happens on a later fold, matching "at the next fold rebuild".
+The first fold seen after a plugin start is a baseline and never causes rotation. Rotation happens on a later fold, matching "at the next fold rebuild". The current session is considered eligible only while its latest ordinary conversation request is an OpenCode Go DeepSeek-series request.
 
 A rotation changes only the upstream routing id. billion-context keeps writing the same state file for the DSH session, so the monitor keeps following it; after recording the fold that triggered the rotation it advances its fold cursor. The same rebuild cannot rotate twice, but a later rebuild can rotate again.
 
 ## Requirements
 
-- DSH with the `llm-pi-ai` adapter and an OpenCode Go provider (default `opencode-go`).
+- DSH with the `llm-pi-ai` adapter and an OpenCode Go provider (default `opencode-go`) configured with at least one DeepSeek-series model (model id starts with `deepseek`).
 - billion-context installed and actively saving session state.
 - Node.js 20 or newer.
 
@@ -54,11 +57,11 @@ Because the plugin entry point reloads `lib/impl.js` with a cache-busting query 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `true` | Master switch. When false, hooks pass through and the monitor does not run. |
-| `providers` | `["opencode-go"]` | Providers eligible for routing. |
-| `models` | `[]` | Optional model allow-list; empty means all models of the provider. |
+| `providers` | `["opencode-go"]` | Providers eligible for routing; the model must still be a `deepseek*` id. |
+| `models` | `[]` | Optional exact DeepSeek model allow-list; empty means any `deepseek*` model of the provider. |
 | `cacheHitThresholdPct` | `25` | A fold counts as "cache lost" when `hPct <= this`. |
 | `foldsWindow` | `1` | How many recent folds must all be below the cache threshold. |
-| `ttftThresholdMs` | `20000` | Average time to first content token at or above this is slow. |
+| `ttftThresholdMs` | `12000` | Average time to first content token at or above this is slow. |
 | `throughputThresholdTps` | `60` | Average output tokens/second at or below this is slow. |
 | `sampleSize` | `5` | Number of recent requests used for the performance decision. |
 | `requireFullSamples` | `true` | Require all `sampleSize` samples before rotating. |
@@ -80,13 +83,15 @@ Because the plugin entry point reloads `lib/impl.js` with a cache-busting query 
 
 `GET /opencode-router/status` returns JSON with the effective config, persisted routes, and per-session monitor state:
 
+- `eligibility` — the configured providers and the fixed `deepseek` model prefix;
 - `baselineReady` and `lastFoldSeq` — fold cursor;
 - `latestFold` — latest fold record (including `hPct`);
 - `watchingId` — DSH session id whose billion-context state file is being followed;
 - `route` — current rotated routing id, or `null`;
+- `targetActive` — whether the latest ordinary conversation request was an eligible OpenCode Go DeepSeek request; `false` blocks rotation;
 - `samples` — count, average TTFT, average throughput;
 - `rotations`, `lastRequestAt`, `lastTickAt`, `lastError`;
-- `routing` — header-hook counters and the latest decision: `checks`, `applications`, `lastCheckedAt`, `lastCheckedSessionId`, `lastAppliedAt`, `lastAppliedSessionId`, `lastAppliedValue`, `lastReason`. `lastReason` is `applied`, `no-route`, `existing-header`, or `no-headers`.
+- `routing` — header-hook counters and the latest decision: `checks`, `applications`, `lastCheckedAt`, `lastCheckedSessionId`, `lastAppliedAt`, `lastAppliedSessionId`, `lastAppliedValue`, `lastReason`. `lastReason` is `applied`, `no-route`, `existing-header`, `no-headers`, `disabled`, or `not-target`.
 
 The route is localhost-only when the host's web server is bound to localhost. Treat the JSON as diagnostics.
 
@@ -103,7 +108,7 @@ The route is localhost-only when the host's web server is bound to localhost. Tr
 node --test
 ```
 
-The suite covers fold parsing, the cache/performance decision, state persistence, the monitor state machine, header routing, and stream measurement.
+The suite covers fold parsing, the cache/performance decision, DeepSeek-only eligibility, state persistence, the monitor state machine, header routing, and stream measurement.
 
 ## License
 
