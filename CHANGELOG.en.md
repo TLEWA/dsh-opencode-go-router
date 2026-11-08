@@ -3,6 +3,31 @@
 All notable changes to this project are documented here. Versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-11-09
+
+### Added
+
+- Statistics without billion-context: the status route adds `billionContext`, `statistics`, `requests`, and `poolEvents`. The plugin samples every eligible request itself, and the settings page shows the average hit, warm/cold counts, average TTFT, and throughput; when the fold diagnostics are unavailable the page says so and hides the fold chip.
+- The settings page adds **Pool swaps** and **Cache-hit records**. The first shows code reuse/return, source session, match percentage, tier, and donor TTFT/throughput/sample count; the second shows only the first request after each pooled code reuse; a session reclaiming its own code is not a pool replacement and is not shown; the first request is persisted with the pool event, so it remains visible after the 200-entry request log evicts it. Each row carries its hit percentage, TTFT, throughput, prompt tokens, and cache-read tokens.
+- The settings page adds a **Two-tier pool session codes** list: each pooled code is grouped under tier 1 or tier 2 with its session, full code, eligibility, TTFT, throughput, sample progress, score, idle time, digest size, and pool time; an ineligible row also states why it cannot be swapped.
+- The state file keeps the latest 200 requests and 100 pool events (`requests`, `poolEvents`), sanitized and length-capped on load.
+- The settings page adds **Pool effect (first-request hit)**: it compares the first request of a session that borrowed a code with the first request of a fresh-code session, showing sample counts, average match, and the difference in percentage points; events whose first request has left the request log are skipped.
+
+### Changed
+
+- The pool entry gate is tighter: a donor code's average throughput must be strictly above `poolMinTps` (80 tok/s by default), and its average TTFT must not exceed `poolMaxTtftMs` (8000 ms by default; 8 s is inclusive). Codes that miss either target stay active instead of entering the pool, so a slow code is not handed to a new session.
+- Tier 2 no longer requires the prefix-match percentage to reach `poolMatchPct`; that floor now applies to tier 1 only. Tier 2 still requires valid samples, TTFT, throughput, and age, and is ranked by speed.
+- Revival no longer goes through either pool tier or matching: a returning session reclaims its own code whenever that code is still idle, with no match, tier, sample, or speed check. If the code was already handed to another session, the fresh replacement is kept instead of borrowing another code.
+- Pool adoption and revival events are written to both the route state and history, which is what the settings page renders.
+
+### Fixed
+
+- Fixed the pool-effect metric treating the earliest request still in the ring as the first request. Each route now records the first request time of its code window (`firstRequestAt`), and the first-request snapshot is stored on the adoption pool event; when that request has fallen out of the 200-entry ring the metric uses the snapshot instead of skipping the session or promoting a later warm request (c726e104's 0% was previously reported as 99.1%).
+
+### Tests
+
+- Added coverage for the entry gate, request and pool-event logs, the statistics summary, the status payload without billion-context, the client notice plus the two log sections (the cache log keeps only the first request after a pool reuse), and the two-tier code list; new tests cover the tier-2 match floor removal, direct revival, the first-request marker, the first-request snapshot, ring eviction, and the client pool-effect display; all 79 tests pass.
+
 ## [0.6.0] - 2026-11-09
 
 ### Added
