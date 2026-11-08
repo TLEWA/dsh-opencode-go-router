@@ -147,6 +147,16 @@ node --test
 
 The suite covers fold parsing, cache-hit measurement, the prediction rules and their bases, the performance condition and consecutive-failure stepping, DeepSeek-only eligibility, state persistence, rotation history, the monitor, header routing, stream measurement, and the client bundle registration.
 
+## Other DSH projects I work on
+
+Prompt-cache routing is only one corner of DSH. These are the other plugins I maintain — take what fits.
+
+- **[dsh-sidebar-row-menu](https://github.com/TLEWA/dsh-sidebar-row-menu)** — right-click menus for sidebar rows: workspace rows, session rows and the conversation body each get their own menu, with "Open with" and "More actions" submenus.
+- **[dsh-sidebar-organizer](https://github.com/TLEWA/dsh-sidebar-organizer)** — a layout organizer for seven regions: sidebar, sidebar footer, conversation tabs, composer, session header, right panel, and settings navigation all support long-press drag to reorder, and panels can be tucked into "More".
+- **[dsh-better-choice](https://github.com/TLEWA/dsh-better-choice)** — an `ask_user_question` enhancement: right-click an option to add a note, or ask the model a side question with the same context before choosing.
+- **[dsh-if](https://github.com/TLEWA/dsh-if)** — the `/if` command: let the model judge a condition from prior context, then send the instruction below it as a user message only when it holds.
+- **[dsh-utf8-output](https://github.com/TLEWA/dsh-utf8-output)** — fixes GBK/CP936/CP932 mojibake from DSH subprocess output on Windows.
+
 ## License
 
 MIT

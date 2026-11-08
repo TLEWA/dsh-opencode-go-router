@@ -147,6 +147,16 @@ node --test
 
 测试覆盖折叠解析、缓存命中测量、预测规则与依据、性能判定与连续失败步进、仅 DeepSeek 的适用范围、状态持久化、轮换历史、监视器、请求头路由、流式测量，以及客户端 bundle 注册。
 
+## 我的其他 DSH 项目
+
+上下文路由只是 DSH 的一小块。下面这些插件也都由我维护，按需取用。
+
+- **[dsh-sidebar-row-menu](https://github.com/TLEWA/dsh-sidebar-row-menu)** —— 侧栏行右键菜单：工作区行、会话行与会话正文各有自己的右键菜单，含「打开方式」「更多操作」二级菜单。
+- **[dsh-sidebar-organizer](https://github.com/TLEWA/dsh-sidebar-organizer)** —— 七区域布局整理器：侧栏、侧栏底部、对话标签、输入框、会话头部、右侧栏、设置导航都能长按拖拽排序，面板可以收进「更多」再拖回来。
+- **[dsh-better-choice](https://github.com/TLEWA/dsh-better-choice)** —— `ask_user_question` 增强：右键选项补备注，选之前先拿同一份上下文旁问模型一句。
+- **[dsh-if](https://github.com/TLEWA/dsh-if)** —— `/if` 命令：让模型结合上文判断条件，成立才把下面的指令作为用户消息发出。
+- **[dsh-utf8-output](https://github.com/TLEWA/dsh-utf8-output)** —— 修复 Windows 下 DSH 子进程 GBK/CP936/CP932 输出乱码。
+
 ## 许可证
 
 MIT
