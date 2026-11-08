@@ -29,7 +29,7 @@ OpenCode Go 用 `x-opencode-session` 请求头把一条会话钉在某个上游�
 - **实测缓存证据。** 它包装合格请求的 `llm/stream`，读取最后一个 `usage` 块。一次请求的缓存命中率是 `cacheReadTokens / (inputTokens + cacheReadTokens)`；新输入加缓存读取量就是上游实际计费的提示词长度。样本保存 TTFT、输出吞吐（token/秒）、提示词 token 数、缓存读取量和命中率；每个 DSH 会话使用最近 `sampleSize` 个有效样本。
 - **折叠账本（仅作诊断）。** 它同时读取 billion-context 的会话状态文件（`sessions/openai/<host>_<sha256(conversationId).slice(0,24)>.json`），跟踪 `metadata.cacheLedger.folds`。billion-context 的 `conversationId` 取自优先级最高的会话请求头，在 DSH 里是 `x-bili-plugin-conversation`（DSH 会话 id）；`x-opencode-session` 的优先级更低，所以轮换它不会改变文件名。最新的折叠只作为“刚才那次大冷请求是重建”的证据，不再直接触发轮换。插件不修改自身之外的任何文件：0.5.0 移除了 0.4.0 那个需要给 billion-context 打补丁的折叠前衔接。
 - **适用范围。** 只处理来自已配置 provider（默认 `opencode-go`）且模型 id 以 `deepseek` 开头（大小写不敏感）的请求。`models` 可以收窄到具体的 DeepSeek id。其他模型被忽略；如果最近一次普通会话请求用的是不合格的模型，则跳过轮换。声明了 `purpose` 的辅助请求不会改变这一状态。
-- **预测。** 在合格请求发出前，插件按以下顺序预测它的缓存命中：系统提示词变化或消息历史变短 → 0%；还没有任何实测请求 → 未知，绝不轮换；空闲达到 `cacheTtlMs`（默认 1 小时）→ 0%；上次命中 `>=` 80% → 沿用；上次请求完整 prefill 了大前缀（`>=` `prefillMinTokens` 且命中低）→ 100%，因为那次 prefill 已经把前缀写进缓存（即折叠重建的情形）；其余情况沿用上次实测命中，命中 `<=` `cacheHitThresholdPct` 即判冷。
+- **预测。** 在合格请求发出前，插件按以下顺序预测它的缓存命中：系统提示词变化或消息历史变短 → 0%；还没有任何实测请求 → 未知，绝不轮换；空闲达到 `cacheTtlMs`（默认 1 小时）→ 0%；上次命中 `>=` 80% → 沿用；上次请求完整 prefill 了大前缀（`>=` `prefillMinTokens` 且命中低）→ 按热处理（实测 95–99%），因为那次 prefill 已经把前缀写进缓存（即折叠重建的情形）；这是概率判断，不是保证——若那条请求实际仍冷，下一条会按 cache-miss-persists 判冷并轮换；其余情况沿用上次实测命中，命中 `<=` `cacheHitThresholdPct` 即判冷。
 - **判定。** 只有在预测为冷、最近样本很慢（平均 TTFT `>=` 默认 12000 ms，或平均吞吐 `<=` 默认 60 token/秒，会按失败步进放宽）、最近一次普通请求合格、且 `minRotationGapMs` 已过时才轮换。记录里保留预测依据（`system-rewrite`、`history-compacted`、`idle-expired`、`cache-miss-persists` 等）和预期命中率。
 - **路由。** 一个持久化的路由把 DSH 会话 id 映射到生成的 `ses_...` 值。`llm-pi-ai/request-headers` 瀑布流在 pi-ai 组装好请求头之后、请求发出之前执行，因此在那里设置 `x-opencode-session` 会真正上线，预测写入的路由也作用于同一条请求。在参考配置里，`dsh-opencode-ip-guard` 之类的配套注入器会提供等于 DSH 会话 id 的基线值；路由存在时本插件替换它，注入器的“不覆盖”回退则会保留新值。
 - **没有 billion-context 也不产生影响。** 如果会话目录或会话状态文件不存在，折叠诊断保持空闲。预测只依赖实测样本，没有样本就不会轮换，也不会把异常抛进 DSH。
@@ -82,7 +82,7 @@ dsh plugin add dsh-opencode-go-router --profile <profile>
 | `cacheHitThresholdPct` | `25` | 只有下一条请求的预测缓存命中率低于或等于此值才轮换。 |
 | `predictiveRotation` | `true` | 预测下一条请求的缓存命中并在其发出前轮换。设为 false 则完全不做切换。 |
 | `cacheTtlMs` | `3600000` | 空闲达到该值即预测为冷。实测显示 15–60 分钟仍会命中，所以默认取 1 小时；`0` 关闭空闲规则。 |
-| `prefillMinTokens` | `4000` | 一次冷请求如果计费提示词不少于该值，就视为完整 prefill，下一条请求预测为热。 |
+| `prefillMinTokens` | `4000` | 一次冷请求如果计费提示词不少于该值，就视为完整 prefill，下一条请求预测为热（属于假设；该请求实测若仍冷，会在再下一条纠正）。 |
 | `ttftThresholdMs` | `12000` | 平均首内容 token 时间达到该值即视为慢（基础目标）。 |
 | `throughputThresholdTps` | `60` | 平均输出吞吐低于或等于该值即视为慢（基础目标）。 |
 | `stepTtftGraceMs` | `2000` | 每连续失败一次，下一次 TTFT 目标放宽这么多。 |
