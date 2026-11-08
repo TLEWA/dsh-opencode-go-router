@@ -8,6 +8,8 @@
 
 一个 DeepSeek Harness（DSH）宿主插件：当一条 OpenCode Go 的 DeepSeek 系列会话请求**即将**打不中上游前缀缓存、并且最近的请求很慢时，为这条请求换一个新的路由 id。预测发生在请求发出之前，所以切换正好作用于这条请求本身，不会额外增加一次缓存 miss。
 
+它还维护一个两级热路由 id 池：前缀相似的新会话可以接手已有缓存的 id，从而省掉冷启动。
+
 这是 DSH 插件（内部 id 为 `opencode-router`）的 npm 包。它只修改 OpenCode Go 的路由请求头，不是模型适配器。
 
 ## 为什么需要它
@@ -35,6 +37,22 @@ OpenCode Go 用 `x-opencode-session` 请求头把一条会话钉在某个上游�
 - **没有 billion-context 也不产生影响。** 如果会话目录或会话状态文件不存在，折叠诊断保持空闲。预测只依赖实测样本，没有样本就不会轮换，也不会把异常抛进 DSH。
 
 会话的第一个请求没有实测样本，因此不会因预测而轮换；插件启动后看到的第一个折叠只作为诊断基线。轮换只改变上游路由 id，billion-context 仍为同一个 DSH 会话写同一个状态文件，所以监视器可以一直跟踪下去。
+
+## 热路由 id 池
+
+一个路由 id 绑定一个上游后端及其缓存。会话结束之后，这个 id 对前缀重叠的新会话仍然有价值。池就是为这种交接准备的。
+
+**入池。** 会话连续 `poolIdleMs`（默认 3 分钟）没有产生有意义的事件，且没有进行中的回合、工具调用、确认或后台任务，宿主也报告 agent 空闲时，它的 code 进入池。改标题、写请求头、LLM 重试这类被动事件不会重置计时。会话被归档时立即入池。入池后不活跃超过 `poolExpireMs` 的 code 会被剔除，之后永远不会再被交出。
+
+**前缀摘要。** 每条合格请求发出前，插件为系统提示词、工具定义、消息文本、工具参数和工具结果生成摘要；只保存分块的 SHA-256，不保存原文。命中率等于共同的前缀块数除以新会话的块数，因此老 code 至少要覆盖新前缀的 `poolMatchPct`（默认 60%）。
+
+**两级池。** 一级池是不活跃时间小于 `poolTier1Ms`（默认 1 小时）的 code；二级池是 1–24 小时的 code。候选还必须满足：绑定该 code 的实测样本不少于 `poolSampleSize` 条、平均 TTFT 不超过 `poolMaxTtftMs`（10 秒）、平均吞吐高于 `poolMinTps`（70 tok/s）。一级候选按前缀命中率取最大（并列时取吞吐更高、TTFT 更低、最近更活跃者）。只有一级没有任何合格候选时才看二级；二级按 `-(平均 TTFT 秒数 × 10) + 平均吞吐` 取最高分。只要二级 code 达到命中率下限，即使命中率更低也会优先于新生成 code。
+
+**交换。** 新会话先新生成一个 code。若有合格候选，两者交换：新会话拿到老 code，连同它的摘要和绑定样本；老会话拿到新生成的 code，摘要与样本清空，并进入休眠，下次请求后空闲再重新入池。没有合格候选时，新会话保留自己的新 code。仍在池中的老会话复苏时，若自己的 code 仍合格就回收；否则退回新生成。
+
+只有已经生成前缀摘要、绑定样本不少于 `poolSampleSize`、未过期且不在休眠的会话 code 才会入池；样本不足的 code 会保持活跃，让所属会话继续使用。0.6 之前创建、还没有摘要的旧路由会保持活跃，直到会话发出下一条请求。`poolMaxEntries` 限制池大小，超出时淘汰最久不活跃的 code；被淘汰的 code 在会话重新活跃前不会再次入池。
+
+池开启时，会话的第一条合格请求就会创建持久化路由，即使当次不需要轮换。这个路由就是之后入池、交给别人的对象。把 `poolEnabled` 设为 `false` 可保留 0.6 之前的行为：只有发生轮换才创建路由，未轮换会话沿用宿主或配套注入器提供的请求头。
 
 ## 环境要求
 
@@ -102,19 +120,33 @@ dsh plugin add dsh-opencode-go-router --profile <profile>
 | `maxSamples` | `20` | 每个会话保留的最大样本数。 |
 | `sessionActiveMs` | `600000` | 会话空闲超过该时长后停止轮询。 |
 | `minRotationGapMs` | `0` | 同一会话两次轮换之间的最小间隔。 |
+| `poolEnabled` | `true` | 启用热路由 id 池。 |
+| `poolIdleMs` | `180000` | 无待办工作时，空闲多久后 code 入池。 |
+| `poolMatchPct` | `60` | 老 code 必须覆盖的前缀摘要命中率下限。 |
+| `poolMinTps` | `70` | 老 code 样本的平均吞吐下限。 |
+| `poolMaxTtftMs` | `10000` | 老 code 样本的平均 TTFT 上限。 |
+| `poolSampleSize` | `5` | code 成为候选前要求的绑定样本数。 |
+| `poolTier1Ms` | `3600000` | 不活跃时间小于该值的 code 属于一级池。 |
+| `poolExpireMs` | `86400000` | 不活跃超过该值就从池中剔除，之后不再交出。 |
+| `poolMaxEntries` | `50` | 池中 code 上限；超出时先淘汰最久不活跃者。 |
+| `poolDigestChunkChars` | `512` | 每个前缀摘要块的字符数。 |
+| `poolDigestMaxChars` | `262144` | 参与摘要的前缀最大字符数。 |
 
 ## 状态路由
 
-`GET /opencode-router/status` 返回 JSON，包含生效配置、持久化路由、轮换历史和每个会话的监视状态：
+`GET /opencode-router/status` 返回 JSON，包含生效配置、持久化路由、池内容、轮换历史和每个会话的监视状态：
 
-- `history` —— 最近的静默切换，最新的在前，含 `sessionId`、`at`、`reason`（`predicted-cold`）、`basis`、`foldSeq`、`cacheHitPct`（预期命中率）、`step`、路由 `value`、切换前后 TTFT 与吞吐、样本进度，以及 `backfilled` 标记；
+- `history` —— 最近的路由记录，最新的在前，含 `sessionId`、`at`、`reason`（`predicted-cold`、`pool-adopted` 或 `pool-donated`）、`basis`、`foldSeq`、`cacheHitPct`（预期命中率）、`step`、路由 `value`、切换前后 TTFT 与吞吐、样本进度，以及 `backfilled` 标记。新记录还带 `version` 与 `thresholds`（基础/生效 TTFT 与吞吐目标、失败步进）；池记录为 `thresholds: null`，并带 `poolMatchPct`、`poolTier`、`poolScore`、`poolSourceSessionId`、`poolRole`；
+- `routes` —— 持久化路由；前缀摘要脱敏为 `digestChunks`（块数），绑定样本概括为 `poolSamples`；
+- `pool` —— `enabled`、各项上限、`total`、`tier1`、`tier2`、`eligible`、`lastAdoption`、`lastRevival` 以及每个条目的摘要；
+- `activity` —— 每个会话的进行中回合、工具调用、确认、后台任务和最近活动时间；它们决定能否入池；
 - `eligibility` —— 已配置的 provider 和固定的 `deepseek` 模型前缀；
 - `baselineReady` 与 `lastFoldSeq` —— 折叠诊断的游标；
 - `latestFold` —— 最新的折叠记录（含 `hPct`）；
 - `watchingId` —— 正在跟踪的 billion-context 状态文件对应的 DSH 会话 id；
-- `route` —— 当前轮换后的路由 id，或 `null`；其 `reason` 为 `predicted-cold`，`basis` 为预测依据，`step` 为当次切换使用的失败步进；
+- `route` —— 当前轮换后的路由 id，或 `null`；其 `reason` 为 `predicted-cold`、`pool-adopted` 或 `pool-donated`，`basis` 为预测或池的依据，`step` 为当次切换使用的失败步进；
 - `targetActive` —— 最近一次普通会话请求是否为合格的 OpenCode Go DeepSeek 请求；`false` 会阻止轮换；
-- `lastPrediction` —— 最近一次请求前预测：依据、预期与上次命中率、是否判冷、空闲时长、样本数、性能摘要、步进、`rotated`，以及 `skipReason`（`predictive-rotation-off`、`cache-expected-warm`、`not-target`、`cooldown`、`performance-ok`）；
+- `lastPrediction` —— 最近一次请求前预测：依据、预期与上次命中率、是否判冷、空闲时长、样本数、性能摘要、步进、`rotated`，以及 `skipReason`（`predictive-rotation-off`、`cache-expected-warm`、`not-target`、`cooldown`、`performance-ok`、`pool-adopted`、`pool-revived`）；
 - `predictions`、`predictiveRotation`、`cacheHitThresholdPct`、`cacheTtlMs` —— 已做预测次数与预测设置；
 - `systemPromptFp`、`messageCount`、`lastSample` —— 预测用于比较的最新前缀输入；
 - `stepping` —— `step`、`consecutiveFailures`、基础与生效的 TTFT/吞吐阈值，以及每步放宽量；
@@ -128,13 +160,13 @@ dsh plugin add dsh-opencode-go-router --profile <profile>
 
 在 DSH Web 客户端打开插件管理器，选择本 bundle。详情页会在 bundle 配置行上方显示 **静默切换性能记录**。
 
-每条静默切换会显示时间、短会话 id、触发原因（`预测冷请求` 或 `系统提示词改写`）、预测依据与折叠编号、预期缓存命中率、失败步进（大于 0 时）、切换前的平均 TTFT 与吞吐、切换后前 `sampleSize` 个合格样本，以及百分比变化。标题栏还会显示最近活跃会话的步进与生效阈值，面板里解释了每一步的放宽量。记录每五秒从 `GET /opencode-router/status` 刷新一次。切换后窗口攒满 `sampleSize` 个样本后即冻结，之后的流量不会改写历史。
+每条路由记录会显示时间、短会话 id、触发原因（`预测冷请求`、`系统提示词改写`、`池复用` 或 `池借出`）、预测依据与折叠编号、预期缓存命中率、失败步进（大于 0 时）、切换前的平均 TTFT 与吞吐、切换后前 `sampleSize` 个合格样本，以及百分比变化。每条记录还会标出写入时生效的阈值；没有记录阈值的旧版本行会标记为旧版记录，而不会拿今天的默认值去评判。标题栏显示池大小、两级数量、合格数、最近活跃会话的步进与生效阈值，面板里解释了每一步的放宽量。记录每五秒从 `GET /opencode-router/status` 刷新一次。切换后窗口攒满 `sampleSize` 个样本后即冻结，之后的流量不会改写历史。
 
 0.2.0 之前创建的路由会被回填为每个仍已知路由一行，并标记为 `Reconstructed`；它们的切换后数值来自该次轮换之后保留的样本。面板只存在于 Web 客户端，不影响宿主路由。
 
 ## 隐私与安全
 
-- 保存的数据仅限 DSH 会话 id、生成的路由 id、折叠编号、缓存百分比、TTFT、吞吐、轮换历史和时间戳。不保存提示词、消息、工具输出或 API 密钥。
+- 保存的数据仅限 DSH 会话 id、生成的路由 id、折叠编号、缓存百分比、TTFT、吞吐、路由历史、时间戳，以及用于池匹配的分块 SHA-256 前缀哈希。不保存提示词、消息、工具输出或 API 密钥；摘要无法还原成原文。
 - 每个宿主回调都自行捕获异常。billion-context 状态文件缺失或格式异常只会产生一条日志。
 - 修改请求头只是路由提示，并不保证网关一定选中不同的物理后端。如果网关忽略未知或新的会话值，插件无法强制迁移。
 - billion-context 的状态文件是内部格式。如果其布局变化，折叠诊断可能看不到折叠并保持空闲，插件不会破坏任何数据。
@@ -145,7 +177,7 @@ dsh plugin add dsh-opencode-go-router --profile <profile>
 node --test
 ```
 
-测试覆盖折叠解析、缓存命中测量、预测规则与依据、性能判定与连续失败步进、仅 DeepSeek 的适用范围、状态持久化、轮换历史、监视器、请求头路由、流式测量，以及客户端 bundle 注册。
+测试覆盖折叠解析、缓存命中测量、预测规则与依据、性能判定与连续失败步进、仅 DeepSeek 的适用范围、状态持久化、轮换历史、监视器、请求头路由、流式测量、客户端 bundle 注册、前缀摘要、两级池、池交换与复苏、空闲/归档入池，以及活动跟踪。
 
 ## 我的其他 DSH 项目
 

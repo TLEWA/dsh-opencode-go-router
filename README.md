@@ -8,6 +8,8 @@
 
 A DeepSeek Harness (DSH) host plugin that gives an OpenCode Go conversation using a DeepSeek-series model a fresh routing id when the **next** request is predicted to miss the upstream prompt cache **and** recent requests are slow. The prediction runs before the request is sent, so the switch applies to that very request and does not add a cache miss of its own.
 
+It also keeps a two-tier pool of warm routing ids, so a new conversation with a similar prompt prefix can start on a backend that already has that prefix cached instead of paying a cold start.
+
 This is the npm package for the DSH plugin whose internal id is `opencode-router`. It only rotates the OpenCode Go routing header; it is not a model adapter.
 
 ## Why
@@ -35,6 +37,22 @@ The plugin does not compress anything itself and does not change the prompt or t
 - **No billion-context, no effect.** If the sessions directory or the session state file is absent, the fold diagnostics stay idle. The prediction uses only measured samples, so it never rotates without them, and no exception is thrown into DSH.
 
 The first request of a session has no measured sample, so it never rotates on a prediction; the first fold seen after a plugin start is only a baseline for the diagnostics. A rotation changes only the upstream routing id, and billion-context keeps writing the same state file for the DSH session, so the monitor keeps following it.
+
+## Warm routing-id pool
+
+A routing id is tied to one upstream backend and its cache. When a conversation stops, its id can still be useful to another conversation whose prefix overlaps. The pool exists for that handoff.
+
+**Pooling.** A conversation's code enters the pool after `poolIdleMs` (three minutes by default) without a meaningful session event, provided no turn, tool call, approval, or background job is pending and the host reports the agent as idle. Passive events such as a title change, a request-header write, or an LLM retry do not reset that timer. Archiving a session pools its code immediately. A code that stays pooled beyond `poolExpireMs` is dropped and can never be handed out again.
+
+**Prefix digest.** Before each eligible request the plugin builds a digest of the system prompt, tool definitions, and message text, tool arguments, and tool results. It stores only chunked SHA-256 hashes, never the text. The match percentage is the number of common leading digest chunks divided by the new conversation's chunk count, so a donor must cover at least `poolMatchPct` (60% by default) of the new prefix.
+
+**Two tiers.** Tier 1 holds codes inactive for less than `poolTier1Ms` (one hour by default); tier 2 holds codes inactive for one to twenty-four hours. A candidate must also have at least `poolSampleSize` measured samples bound to that code, an average TTFT at most `poolMaxTtftMs` (10 s), and an average throughput above `poolMinTps` (70 tok/s). Among tier-1 candidates the plugin picks the largest prefix match (ties: higher throughput, lower TTFT, more recent activity). Tier 2 is considered only when no tier-1 candidate qualifies; there the score is `-(avg TTFT in seconds × 10) + avg throughput`, and the highest score wins. A tier-2 code with a lower match is still preferred over generating a fresh code, as long as it meets the match floor.
+
+**Exchange.** A new conversation first generates a fresh code. If a candidate qualifies, the two swap: the new conversation takes the donor's code together with its digest and code-bound samples, and the donor receives the fresh code with an empty digest and no samples. The donor is marked sleeping and can rejoin the pool after its next request goes idle. No qualified candidate means the new conversation keeps its fresh code. A returning conversation whose own code is still pooled reclaims it when it qualifies; otherwise it falls back to a fresh code.
+
+Only codes that already have a prefix digest and at least `poolSampleSize` bound samples, are not expired, and are not sleeping enter the pool; a code with too little evidence stays active so its owner can keep using it. A route created before 0.6 without a digest stays active until its session sends its next request. `poolMaxEntries` caps the pool; the least recently active pooled code is evicted first, and an evicted code stays out until its session becomes active again.
+
+With the pool enabled, the first eligible request of a session creates a persisted route even when no rotation is needed. That route is what the pool later owns and hands over. Set `poolEnabled: false` to keep the pre-0.6 behavior, where only a rotation created a route and unrotated sessions kept the header supplied by the host or a companion injector.
 
 ## Requirements
 
@@ -102,19 +120,33 @@ Because the plugin entry point reloads `lib/impl.js` with a cache-busting query 
 | `maxSamples` | `20` | Maximum samples kept per session. |
 | `sessionActiveMs` | `600000` | Stop polling a session after this idle time. |
 | `minRotationGapMs` | `0` | Minimum time between rotations for one session. |
+| `poolEnabled` | `true` | Enable the warm routing-id pool. |
+| `poolIdleMs` | `180000` | Idle time with no pending work before a code enters the pool. |
+| `poolMatchPct` | `60` | Minimum prefix-digest match a donor code must cover. |
+| `poolMinTps` | `70` | Minimum average throughput of a donor code's samples. |
+| `poolMaxTtftMs` | `10000` | Maximum average TTFT of a donor code's samples. |
+| `poolSampleSize` | `5` | Code-bound samples required before a code can be a donor. |
+| `poolTier1Ms` | `3600000` | Codes inactive for less than this are tier 1. |
+| `poolExpireMs` | `86400000` | Drop a pooled code after this inactivity; it is never handed out again. |
+| `poolMaxEntries` | `50` | Maximum pooled codes; the least recently active is evicted first. |
+| `poolDigestChunkChars` | `512` | Characters per prefix-digest chunk. |
+| `poolDigestMaxChars` | `262144` | Maximum prefix characters hashed into a digest. |
 
 ## Status route
 
-`GET /opencode-router/status` returns JSON with the effective config, persisted routes, rotation history, and per-session monitor state:
+`GET /opencode-router/status` returns JSON with the effective config, persisted routes, pool contents, rotation history, and per-session monitor state:
 
-- `history` — recent silent switches, newest first, with `sessionId`, `at`, `reason` (`predicted-cold`), `basis`, `foldSeq`, `cacheHitPct` (the expected hit), `step`, the routing `value`, before/after TTFT and throughput, sample progress, and a `backfilled` marker;
+- `history` — recent routing records, newest first, with `sessionId`, `at`, `reason` (`predicted-cold`, `pool-adopted`, or `pool-donated`), `basis`, `foldSeq`, `cacheHitPct` (the expected hit), `step`, the routing `value`, before/after TTFT and throughput, sample progress, and a `backfilled` marker. New rows also carry `version` and `thresholds` (base and effective TTFT/throughput targets plus the failure step); pool rows have `thresholds: null` and the pool fields `poolMatchPct`, `poolTier`, `poolScore`, `poolSourceSessionId`, `poolRole`;
+- `routes` — persisted routes with the prefix digest redacted to `digestChunks` (count) and code-bound samples summarized as `poolSamples`;
+- `pool` — `enabled`, limits, `total`, `tier1`, `tier2`, `eligible`, `lastAdoption`, `lastRevival`, and per-entry summaries;
+- `activity` — per-session open turns, tool calls, approvals, background jobs, and last activity time; these gate pooling;
 - `eligibility` — the configured providers and the fixed `deepseek` model prefix;
 - `baselineReady` and `lastFoldSeq` — fold cursor for the diagnostics;
 - `latestFold` — latest fold record (including `hPct`);
 - `watchingId` — DSH session id whose billion-context state file is being followed;
-- `route` — current rotated routing id, or `null`; its `reason` is `predicted-cold`, its `basis` is the prediction basis, and `step` is the failure step used for that switch;
+- `route` — current rotated routing id, or `null`; its `reason` is `predicted-cold`, `pool-adopted`, or `pool-donated`, its `basis` is the prediction or pool basis, and `step` is the failure step used for that switch;
 - `targetActive` — whether the latest ordinary conversation request was an eligible OpenCode Go DeepSeek request; `false` blocks rotation;
-- `lastPrediction` — the latest pre-request prediction: basis, expected and last hit, cold flag, idle gap, sample count, performance summary, step, `rotated`, and `skipReason` (`predictive-rotation-off`, `cache-expected-warm`, `not-target`, `cooldown`, `performance-ok`);
+- `lastPrediction` — the latest pre-request prediction: basis, expected and last hit, cold flag, idle gap, sample count, performance summary, step, `rotated`, and `skipReason` (`predictive-rotation-off`, `cache-expected-warm`, `not-target`, `cooldown`, `performance-ok`, `pool-adopted`, `pool-revived`);
 - `predictions`, `predictiveRotation`, `cacheHitThresholdPct`, `cacheTtlMs` — how many predictions were made and the prediction settings;
 - `systemPromptFp`, `messageCount`, `lastSample` — the latest prefix inputs the prediction compared;
 - `stepping` — `step`, `consecutiveFailures`, base and effective TTFT/throughput thresholds, and the per-step grace values;
@@ -128,13 +160,13 @@ The route is localhost-only when the host's web server is bound to localhost. Tr
 
 In the DSH Web client, open the plugin manager and select this bundle. Its detail page renders a **Silent switch performance log** above the bundle configuration rows.
 
-For each silent switch it shows the time, a short session id, the trigger (`Predicted cold` or `System rewrite`), the prediction basis with the fold number and expected cache hit, the failure step if it was above zero, average TTFT and throughput before the switch, the first `sampleSize` eligible samples after it, and the percentage change. The header also shows the most recently active session's step and effective thresholds, and the panel explains the per-step grace. Rows refresh every five seconds from `GET /opencode-router/status`. The after window is frozen once it has `sampleSize` samples, so later traffic does not rewrite history.
+For each routing record it shows the time, a short session id, the trigger (`Predicted cold`, `System rewrite`, `Pool reuse`, or `Pool donation`), the prediction basis with the fold number and expected cache hit, the failure step if it was above zero, average TTFT and throughput before the switch, the first `sampleSize` eligible samples after it, and the percentage change. Every row also names the thresholds that were active when it was written; rows from versions that did not record thresholds are marked as legacy records rather than being judged against today's defaults. The header shows the pool size, tier counts, eligible count, the most recently active session's step and effective thresholds, and the per-step grace. Rows refresh every five seconds from `GET /opencode-router/status`. The after window is frozen once it has `sampleSize` samples, so later traffic does not rewrite history.
 
 Routes created before 0.2.0 are backfilled as one row per still-known route and marked `Reconstructed`; their after values come from samples retained after that rotation. The panel lives in the Web client and does not affect host routing.
 
 ## Privacy and safety
 
-- Stored data is limited to DSH session ids, generated routing ids, fold numbers, cache percentages, TTFT, throughput, rotation history, and timestamps. No prompts, messages, tool output, or API keys are stored.
+- Stored data is limited to DSH session ids, generated routing ids, fold numbers, cache percentages, TTFT, throughput, routing history, timestamps, and chunked SHA-256 prefix hashes for pool matching. No prompts, messages, tool output, or API keys are stored; the digest cannot be reversed into the prompt text.
 - Every host callback catches its own errors. A missing or malformed billion-context state file only produces a log entry.
 - Rotating a header is a routing hint, not a guarantee that the gateway picks a different physical backend. If the gateway ignores unknown or new session values, the plugin cannot force a move.
 - billion-context's state file is an internal format. If its layout changes, the fold diagnostics may see no folds and stay idle; the plugin will not corrupt anything.
@@ -145,7 +177,7 @@ Routes created before 0.2.0 are backfilled as one row per still-known route and 
 node --test
 ```
 
-The suite covers fold parsing, cache-hit measurement, the prediction rules and their bases, the performance condition and consecutive-failure stepping, DeepSeek-only eligibility, state persistence, rotation history, the monitor, header routing, stream measurement, and the client bundle registration.
+The suite covers fold parsing, cache-hit measurement, the prediction rules and their bases, the performance condition and consecutive-failure stepping, DeepSeek-only eligibility, state persistence, rotation history, the monitor, header routing, stream measurement, the client bundle registration, prefix digests, both pool tiers, pool exchange and revival, idle/archive pooling, and the activity tracker.
 
 ## Other DSH projects I work on
 

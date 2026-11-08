@@ -1,7 +1,7 @@
 {
   "name": "dsh-opencode-go-router",
-  "version": "0.5.0",
-  "description": "DeepSeek Harness plugin: rotate OpenCode Go routing after billion-context cache-losing folds or system-prompt rewrites.",
+  "version": "0.6.0",
+  "description": "DeepSeek Harness plugin: keep OpenCode Go routing ids warm across sessions and rotate them after billion-context cache-losing folds or system-prompt rewrites.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -44,7 +44,9 @@
     "prompt-cache",
     "cache",
     "routing",
-    "session"
+    "session",
+    "routing-pool",
+    "session-affinity"
   ],
   "author": "TLEWA",
   "license": "MIT",
@@ -64,7 +66,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "check": "node --check lib/index.js && node --check lib/core.js && node --check lib/impl.js && node --check lib/monitor.js && node --check lib/store.js && node --check lib/client.js && node --check test/core.test.js && node --check test/impl.test.js && node --check test/monitor.test.js && node --check test/store.test.js && node --check test/client.test.js && node --check test/package.test.js",
+    "check": "node --check lib/index.js && node --check lib/core.js && node --check lib/impl.js && node --check lib/monitor.js && node --check lib/store.js && node --check lib/pool.js && node --check lib/activity.js && node --check lib/client.js && node --check test/core.test.js && node --check test/impl.test.js && node --check test/monitor.test.js && node --check test/store.test.js && node --check test/pool.test.js && node --check test/activity.test.js && node --check test/client.test.js && node --check test/package.test.js",
     "test": "node --test",
     "prepack": "npm run check && npm test",
     "prepublishOnly": "npm run check && npm test"

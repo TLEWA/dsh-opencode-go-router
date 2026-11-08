@@ -432,6 +432,31 @@ test('rotation does not create or follow a state file keyed by the route value',
   assert.equal(monitor.status().watchingId, sessionId);
 });
 
+test('a pool adoption skips the cold rotation for that request', async (t) => {
+  const { store, monitor } = setup(t);
+  coldSlowSamples(store);
+  monitor.pool = {
+    prepareRoute() {
+      return {
+        action: 'adopted',
+        skipPrediction: true,
+        matchPct: 81.25,
+        tier: 1,
+        sourceSessionId: 'session-old',
+        route: null,
+      };
+    },
+  };
+
+  const result = monitor.prepareRequest({ systemPrompt: 'system A', messageCount: 5, digest: { chunks: ['a'], chars: 1 } });
+  assert.equal(result.skipReason, 'pool-adopted');
+  assert.equal(result.rotated, false);
+  assert.equal(result.pool.action, 'adopted');
+  assert.equal(result.pool.matchPct, 81.3);
+  assert.equal(store.routeFor(sessionId), null);
+  assert.equal(monitor.rotations, 0);
+});
+
 test('discovers a state file when the host label has changed', async (t) => {
   const { config, monitor, stateFile, writeState, tick } = setup(t);
   const key = biliSessionKey(sessionId);

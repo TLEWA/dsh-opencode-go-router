@@ -3,6 +3,32 @@
 All notable changes to this project are documented here. Versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-11-09
+
+### Added
+
+- **Two-tier warm routing-id pool** (enabled by default). When an eligible session has been idle for `poolIdleMs` (3 minutes by default) with no active turn, tool call, approval, or background job, or when the session is archived, its `x-opencode-session` code is pooled. When a new session needs a code and an older pooled session's prefix match reaches `poolMatchPct` (60% by default), while that code's recent samples average TTFT `<=` `poolMaxTtftMs` (10 seconds) and throughput `>` `poolMinTps` (70 tok/s), the two codes are swapped: the new session receives the older code, digest, and samples, and the older session receives a freshly generated code and sleeps, avoiding a cold start for the new session. Among qualified candidates, the highest match wins.
+- Prefix matching stores only chunked SHA-256 digests, never prompt text; the match is the number of shared prefix chunks divided by the new session's chunk count. Chunk size is `poolDigestChunkChars` (512 characters), capped at `poolDigestMaxChars` (262144 characters).
+- Tier 1 holds codes inactive for less than `poolTier1Ms` (1 hour); tier 2 (1–24 hours) is consulted only when tier 1 has no qualified candidate, and ranks by `score = -(TTFT seconds × 10) + throughput`. Codes inactive beyond `poolExpireMs` (24 hours) are removed from both tiers and cannot be pooled again.
+- A returning session tries the pool first: it reclaims its own code when that code is still pooled and matches it, otherwise it tries other candidates, and with no candidate it falls back to a fresh code (`pool-fallback`) instead of reusing the sleeping one.
+- Eleven new pool settings: `poolEnabled`, `poolIdleMs`, `poolMatchPct`, `poolMinTps`, `poolMaxTtftMs`, `poolSampleSize`, `poolTier1Ms`, `poolExpireMs`, `poolMaxEntries`, `poolDigestChunkChars`, and `poolDigestMaxChars`. `poolMaxEntries` caps the pool and evicts the least recently active code first; an evicted code stays out until its session becomes active again, so a full pool does not churn on every idle scan.
+
+### Changed
+
+- With the pool enabled, a session's first eligible request creates a persisted route even when no rotation is needed; that route is what the pool later owns and hands over. Set `poolEnabled: false` to keep the pre-0.6 behavior, where only a rotation created a route and unrotated sessions kept the header supplied by the host or a companion injector. A route created before 0.6 has no prefix digest and is not pooled until its session sends another request to fill it in.
+- Every performance record now carries `version` and `thresholds` (base and effective TTFT/throughput targets and the failure step). The settings page explains each switch with the thresholds in force at the time; records without thresholds are marked as legacy records, so today's defaults are not used to second-guess a historical switch.
+- The status route adds `pool` and `activity`; `routes` exposes only `digestChunks` and `poolSamples` summaries instead of digest arrays; `skipReason` adds `pool-adopted` and `pool-revived`; routes and history add the `pool-adopted` and `pool-donated` reasons plus `poolMatchPct`, `poolTier`, `poolScore`, `poolSourceSessionId`, and `poolRole`.
+- The settings page shows the pool size, tier counts, qualified count, last adoption, and each record's pool match and tier.
+
+### Fixed
+
+- A code with fewer than `poolSampleSize` bound samples no longer enters the pool. Such a code could occupy a pool slot but was skipped by selection for lack of samples, forcing its owner to fall back to a freshly generated code on revival and losing a routing id that was still usable.
+- Legacy records are no longer presented as a switch that the current thresholds would have made: records with `thresholds` show the trigger thresholds, and records without them are labeled **Legacy record, trigger thresholds not recorded**.
+
+### Tests
+
+- Added coverage for activity tracking (turns, tools, approvals, background jobs), prefix digests, two-tier selection, code swapping, session revival and fallback, expiry, idle and archived pooling, and the client's pool display.
+
 ## [0.5.0] - 2026-11-08
 
 ### Changed

@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeConfig } from '../lib/core.js';
-import { applyRoutingHeader, applyRoutingHeaderDetailed, measureStream, mount, routingForRequest } from '../lib/impl.js';
+import { applyRoutingHeader, applyRoutingHeaderDetailed, measureStream, mount, publicRoute, publicSession, routingForRequest } from '../lib/impl.js';
 
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -79,6 +79,28 @@ test('applyRoutingHeaderDetailed reports why a header was or was not set', () =>
   assert.equal(kept.applied, false);
   assert.equal(kept.reason, 'existing-header');
   assert.equal(existing.get('x-opencode-session'), 'ses_original');
+});
+
+test('the status payload redacts digests and samples, including lastPool', () => {
+  const route = {
+    value: 'ses_pooled',
+    digest: ['a1b2c3d4e5f60718', '1122334455667788'],
+    samples: [{ ttftMs: 1000, tps: 80 }],
+    digestChars: 1024,
+  };
+  const session = publicSession({
+    sessionId: 's1',
+    route,
+    lastPool: { action: 'kept', route, donor: route },
+  });
+  assert.equal(session.route.digest, undefined);
+  assert.equal(session.route.samples, undefined);
+  assert.equal(session.route.digestChunks, 2);
+  assert.equal(session.route.poolSamples, 1);
+  assert.equal(session.lastPool.route.digest, undefined);
+  assert.equal(session.lastPool.route.digestChunks, 2);
+  assert.equal(session.lastPool.donor.samples, undefined);
+  assert.equal(publicRoute(null), null);
 });
 
 test('measureStream records TTFT, throughput and finish', async () => {

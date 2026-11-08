@@ -102,6 +102,12 @@ test('the performance panel shows the configured throughput threshold', () => {
               sessionId: 'session-abcdef123456',
               at: 1700000000000,
               reason: 'cache-and-performance',
+              version: '0.6.0',
+              thresholds: {
+                step: 2,
+                effectiveTtftThresholdMs: 14000,
+                effectiveThroughputThresholdTps: 55,
+              },
               foldSeq: 3,
               cacheHitPct: 0,
               step: 2,
@@ -112,7 +118,21 @@ test('the performance panel shows the configured throughput threshold', () => {
               afterSamples: 5,
               afterTarget: 5,
               afterComplete: true,
+            }, {
+              id: 'h2',
+              sessionId: 'session-old',
+              at: 1690000000000,
+              reason: 'system-rewrite',
+              basis: 'system-rewrite',
+              beforeTtftMs: 3216,
+              beforeTps: 114.9,
+              afterTtftMs: 3591.4,
+              afterTps: 95.2,
+              afterSamples: 5,
+              afterTarget: 5,
+              afterComplete: true,
             }],
+            pool: { enabled: true, total: 1, tier1: 1, tier2: 0, eligible: 1, lastAdoption: null },
           },
         }, () => {}];
       }
@@ -149,6 +169,7 @@ test('the performance panel shows the configured throughput threshold', () => {
     if (node == null) return;
     if (Array.isArray(node)) { for (const item of node) walk(item); return; }
     if (typeof node === 'string' || typeof node === 'number') { texts.push(String(node)); return; }
+    if (typeof node.type === 'function') { walk(node.type(node.props)); return; }
     walk(node.children);
   };
   walk(tree);
@@ -156,4 +177,7 @@ test('the performance panel shows the configured throughput threshold', () => {
   assert.ok(texts.some((text) => text.includes('TTFT 阈值放宽 2s')), texts.join('\n'));
   assert.ok(texts.some((text) => text.includes('步进 2')), texts.join('\n'));
   assert.ok(texts.some((text) => text.includes('最近活跃会话步进 2')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('触发阈值: TTFT ≥ 14.0s 或吞吐 ≤ 55 tok/s')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('旧版记录，未记录触发阈值')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('路由池：1 个（一级 1、二级 0），合格 1')), texts.join('\n'));
 });

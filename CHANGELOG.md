@@ -3,6 +3,32 @@
 本项目的所有重要变更都记录在这里，版本号遵循
 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] - 2026-11-09
+
+### 新增
+
+- **两级热路由 id 池**（默认开启）。合格会话空闲达到 `poolIdleMs`（默认 3 分钟）且没有进行中的回合、工具调用、确认或后台任务，或者会话被归档时，它的 `x-opencode-session` code 入池。新会话需要 code 时，若池中老会话的前缀匹配达到 `poolMatchPct`（默认 60%），且老会话最近样本的平均 TTFT `<=` `poolMaxTtftMs`（默认 10 秒）、平均吞吐 `>` `poolMinTps`（默认 70 tok/s），就把两边的 code 交换：新会话直接拿到老会话的 code、摘要和样本，老会话拿到新生成的 code 并休眠，避免新会话冷启动。多个合格候选取匹配率最高者。
+- 前缀匹配只保存分块 SHA-256 摘要，不保存提示词原文；匹配率 = 两个摘要的共同前缀块数 / 新会话的块数。块大小 `poolDigestChunkChars`（默认 512 字符），最多 `poolDigestMaxChars`（默认 262144 字符）。
+- 一级池是不活跃时间小于 `poolTier1Ms`（默认 1 小时）的 code；只有一级池没有合格候选时才使用二级池（1–24 小时），二级池按 `score = -(TTFT 秒 × 10) + 吞吐` 取最大。不活跃超过 `poolExpireMs`（默认 24 小时）的 code 从两级池中剔除，也不能再入池。
+- 会话复苏先取池：自己的 code 仍在池中且前缀匹配自己时直接回收；否则尝试其他候选；没有候选就退回新生成（`pool-fallback`），不会继续使用已休眠的旧 code。
+- 新增 11 项池配置：`poolEnabled`、`poolIdleMs`、`poolMatchPct`、`poolMinTps`、`poolMaxTtftMs`、`poolSampleSize`、`poolTier1Ms`、`poolExpireMs`、`poolMaxEntries`、`poolDigestChunkChars`、`poolDigestMaxChars`。`poolMaxEntries` 限制池大小，超出时淘汰最久不活跃的 code；被淘汰的 code 在会话重新活跃前不会再次入池，避免池满时空闲扫描反复入池/淘汰。
+
+### 变更
+
+- 池开启时，会话的第一条合格请求就会创建持久化路由，即使当次不需要轮换；这个路由是之后入池、交给别人的对象。把 `poolEnabled` 设为 `false` 可保留 0.6 之前的行为：只有发生轮换才创建路由，未轮换会话沿用宿主或配套注入器提供的请求头。0.6 之前创建的路由没有前缀摘要，不会被扫描入池，直到会话发出下一条请求补齐摘要。
+- 每条性能记录新增 `version` 与 `thresholds`（基础/生效 TTFT 与吞吐目标、失败步进）。设置页按当时生效的阈值解释每次切换；没有阈值的旧记录标记为旧版记录，不再让用户拿今天的默认值去质疑一次历史切换。
+- 状态路由新增 `pool` 与 `activity`；`routes` 只暴露摘要块数 `digestChunks` 和样本摘要 `poolSamples`，不返回摘要数组；`skipReason` 新增 `pool-adopted`、`pool-revived`；路由与历史新增 `pool-adopted`、`pool-donated` 原因及 `poolMatchPct`、`poolTier`、`poolScore`、`poolSourceSessionId`、`poolRole` 字段。
+- 设置页显示池大小、两级数量、合格数、最近复用，以及每条记录的池匹配率与层级。
+
+### 修复
+
+- 绑定样本少于 `poolSampleSize` 的 code 不再入池。此前这类 code 会占住池位却在选择时因样本不足被跳过，会话复苏时只能退回新生成 code，反而丢失原本可继续使用的路由 id。
+- 旧版本记录不再被当作“按当前阈值发生的一次切换”展示：有 `thresholds` 时显示触发阈值，没有时明确标注“旧版记录，未记录触发阈值”。
+
+### 测试
+
+- 新增活动跟踪（回合、工具、确认、后台任务）、前缀摘要、两级池选择、code 交换、会话复苏与回退、过期剔除、空闲与归档入池，以及客户端池显示的测试。
+
 ## [0.5.0] - 2026-11-08
 
 ### 变更

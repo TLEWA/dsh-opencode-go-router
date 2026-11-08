@@ -1,5 +1,6 @@
 node_modules/
 .tools/
+.research/
 .dsh-meow/
 *.log
 .DS_Store
