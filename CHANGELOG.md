@@ -7,6 +7,7 @@
 
 ### 变更
 
+- 文档：README 改为中文主文档，原英文 README 迁移到 `README.en.md`；同步 `ci.config.json`、`package.json` 与 AGENTS.md 中的文档约定。
 - 删除 `poolCrossTierFallback`。一级池没有合格候选时，不再把未达 `poolMatchPct` 的一级 code 混入二级池排序；它们留在所属会话继续使用。二级池仍没有前缀匹配下限。
 - 二级池新增速度门槛：借出 code 的平均吞吐必须达到会话基线的 `poolSpeedGainRatio` 倍（默认 1.1），且借出方与基线的绑定样本都不少于 `poolSpeedMinSamples`（默认 5）。基线优先取会话自身已绑定样本的吞吐，样本不足时取最近 200 条请求吞吐的中位数；连基线都测不出时门槛放行。慢于基线的老 code 不再被换入，避免为了前缀命中而拖慢新会话。
 - 状态路由与设置页的 `pool` 汇总用 `speedGainRatio`、`speedMinSamples` 取代 `crossTierFallback`。
