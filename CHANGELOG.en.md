@@ -3,7 +3,9 @@
 All notable changes to this project are documented here. Versioning follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.2] - 2026-11-10
+
+> 0.6.1 was published to npm without a GitHub Release; this is the first GitHub Release that also contains 0.6.1's pool-effect metrics and first-request snapshots.
 
 ### Changed
 

@@ -3,7 +3,9 @@
 本项目的所有重要变更都记录在这里，版本号遵循
 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.6.2] - 2026-11-10
+
+> 0.6.1 只发布到 npm，没有对应的 GitHub Release；本版本首次把 0.6.1 的池效果指标与首请求快照带入 GitHub Release。
 
 ### 变更
 
