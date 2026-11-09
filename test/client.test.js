@@ -132,6 +132,20 @@ test('the performance panel shows the configured throughput threshold', () => {
               afterSamples: 5,
               afterTarget: 5,
               afterComplete: true,
+            }, {
+              id: 'h3',
+              sessionId: 'session-adopted-row',
+              at: 1700000002000,
+              reason: 'pool-adopted',
+              basis: 'pool-match',
+              poolRole: 'adopted',
+              beforeTtftMs: 4321.5,
+              beforeTps: 88.8,
+              afterTtftMs: 1300,
+              afterTps: 150,
+              afterSamples: 5,
+              afterTarget: 5,
+              afterComplete: true,
             }],
             pool: {
               enabled: true,
@@ -304,14 +318,42 @@ test('the performance panel shows the configured throughput threshold', () => {
     t: (key) => locales[0].zh[key] || key,
   });
   const texts = [];
-  const walk = (node) => {
+  const walk = (node, out) => {
+    const target = out || texts;
     if (node == null) return;
-    if (Array.isArray(node)) { for (const item of node) walk(item); return; }
-    if (typeof node === 'string' || typeof node === 'number') { texts.push(String(node)); return; }
-    if (typeof node.type === 'function') { walk(node.type(node.props)); return; }
-    walk(node.children);
+    if (Array.isArray(node)) { for (const item of node) walk(item, target); return; }
+    if (typeof node === 'string' || typeof node === 'number') { target.push(String(node)); return; }
+    if (typeof node.type === 'function') { walk(node.type(node.props), target); return; }
+    walk(node.children, target);
   };
   walk(tree);
+
+  const findRow = (node, reason) => {
+    if (node == null) return null;
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        const found = findRow(item, reason);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (typeof node !== 'object') return null;
+    if (node.props && node.props.entry && node.props.entry.reason === reason) return node;
+    if (typeof node.type === 'function') return findRow(node.type(node.props), reason);
+    return findRow(node.children, reason);
+  };
+
+  const adoptedRow = findRow(tree, 'pool-adopted');
+  assert.ok(adoptedRow, 'the adopted history row should render');
+  const adoptedTexts = [];
+  walk(adoptedRow, adoptedTexts);
+  const adoptedDump = adoptedTexts.join('\n');
+  assert.ok(adoptedTexts.some((text) => text.includes('源会话表现')), adoptedDump);
+  assert.ok(adoptedTexts.some((text) => text.includes('同一 code 漂移')), adoptedDump);
+  assert.ok(adoptedTexts.some((text) => text.includes('不是本会话的基线')), adoptedDump);
+  assert.ok(!adoptedTexts.some((text) => text.includes('切换前')), adoptedDump);
+  assert.ok(texts.some((text) => text.includes('切换前')), 'normal rows keep the pre-switch label');
+  assert.ok(texts.some((text) => text.includes('TTFT -35.8%')), 'the average change excludes pool adoption rows');
   assert.ok(texts.some((text) => text.includes('吞吐 ≤ 60 tok/s')), texts.join('\n'));
   assert.ok(texts.some((text) => text.includes('TTFT 阈值放宽 2s')), texts.join('\n'));
   assert.ok(texts.some((text) => text.includes('步进 2')), texts.join('\n'));

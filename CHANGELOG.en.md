@@ -10,6 +10,7 @@ All notable changes to this project are documented here. Versioning follows
 - Removed `poolCrossTierFallback`. When tier 1 has no qualified candidate, tier-1 codes that missed `poolMatchPct` no longer join the tier-2 ranking; they stay with their own session. Tier 2 still has no prefix-match floor.
 - Tier 2 gains a speed gate: the donor's average throughput must reach the session baseline times `poolSpeedGainRatio` (1.1 by default), and both the donor and the baseline need at least `poolSpeedMinSamples` (5 by default) bound samples. The baseline prefers the session's own bound samples and falls back to the median throughput of the last 200 requests; when no baseline can be measured the gate stays open. An older code slower than the baseline is no longer swapped in, so a prefix match cannot cost the new session throughput.
 - The status route and settings page replace `crossTierFallback` in the `pool` summary with `speedGainRatio` and `speedMinSamples`.
+- Settings page: pool-reuse rows now label their before column **Source-session history** (the borrowed code's record in its source session) and their change **Same-code drift**, with an inline note; these rows no longer feed the header's average change, so code drift is not reported as an adoption gain.
 
 ## [0.6.1] - 2026-11-09
 
