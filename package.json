@@ -63,12 +63,13 @@
     "registry": "https://registry.npmjs.org/"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": ">=0.2.1-rc.5 <0.3.0-0"
   },
   "scripts": {
     "check": "node --check lib/index.js && node --check lib/core.js && node --check lib/impl.js && node --check lib/monitor.js && node --check lib/store.js && node --check lib/pool.js && node --check lib/activity.js && node --check lib/client.js && node --check test/core.test.js && node --check test/impl.test.js && node --check test/monitor.test.js && node --check test/store.test.js && node --check test/pool.test.js && node --check test/activity.test.js && node --check test/client.test.js && node --check test/package.test.js",
     "test": "node --test",
     "prepack": "npm run check && npm test",
-    "prepublishOnly": "npm run check && npm test"
+    "prepublishOnly": "npx --yes --package=github:TLEWA/dsh-plugin-ci#v1 dsh-ci-gate --prepublish"
   }
 }

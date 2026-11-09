@@ -1,0 +1,14 @@
+name: drift
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    uses: TLEWA/dsh-plugin-ci/.github/workflows/reusable-drift.yml@v1
