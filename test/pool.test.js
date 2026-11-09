@@ -238,7 +238,7 @@ test('tier 2 has no prefix-match floor, while tier 1 still does', async (t) => {
   assert.equal(adopted.matchPct, 0);
 });
 
-test('cross-tier fallback ranks tier 1 and tier 2 together by speed', async (t) => {
+test('a tier-1 code below the prefix floor never joins the tier-2 fallback', async (t) => {
   const lowMatch = digestFor('alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha');
   const other = digestFor('beta beta beta beta beta beta beta beta beta beta');
 
@@ -258,32 +258,117 @@ test('cross-tier fallback ranks tier 1 and tier 2 together by speed', async (t) 
     lastActiveAt: BASE - 7200000,
     pooledAt: BASE - 7200000,
   }));
-  const combined = ctx.pool.prepareRoute({ sessionId: 'new-combined', digest: other, now: BASE });
-  assert.equal(combined.action, 'adopted');
-  assert.equal(combined.sourceSessionId, 'fast-tier1');
-  assert.equal(combined.tier, 1);
-  assert.equal(combined.matchPct, 0);
+  const adopted = ctx.pool.prepareRoute({ sessionId: 'new-fallback', digest: other, now: BASE });
+  assert.equal(adopted.action, 'adopted');
+  assert.equal(adopted.sourceSessionId, 'slow-tier2');
+  assert.equal(adopted.tier, 2);
 
-  const off = setup(t, { poolCrossTierFallback: false });
-  off.store.setRoute('fast-tier1', route('ses_fast_t1', {
+  const solo = setup(t);
+  solo.store.setRoute('fast-tier1', route('ses_fast_t1', {
     digest: lowMatch.chunks,
     digestChars: lowMatch.chars,
     samples: samples(5, 1000, 300),
     lastActiveAt: BASE - 600000,
     pooledAt: BASE - 600000,
   }));
-  off.store.setRoute('slow-tier2', route('ses_slow_t2', {
+  const kept = solo.pool.prepareRoute({ sessionId: 'new-solo', digest: other, now: BASE });
+  assert.equal(kept.action, 'kept');
+  assert.equal(kept.tier, undefined);
+  assert.equal(solo.store.routeFor('fast-tier1').value, 'ses_fast_t1');
+});
+
+test('tier 2 only hands off when the donor clears the session baseline by poolSpeedGainRatio', async (t) => {
+  const digest = digestFor('shared prefix');
+  const seedBaseline = (ctx) => {
+    for (let index = 0; index < 5; index += 1) {
+      ctx.store.recordSample('baseline', {
+        ttftMs: 2000,
+        tps: 100,
+        hitPct: 90,
+        inputTokens: 1000,
+        cacheReadTokens: 900,
+        at: BASE - 200000 + index,
+      }, 20);
+    }
+  };
+  const donor = (ctx, sessionId, tps) => {
+    ctx.store.setRoute(sessionId, route('ses_' + sessionId, {
+      rotatedAt: BASE - 7200000,
+      digest: digest.chunks,
+      digestChars: digest.chars,
+      samples: samples(5, 1500, tps),
+      lastActiveAt: BASE - 7200000,
+      pooledAt: BASE - 7200000,
+    }));
+  };
+
+  const near = setup(t);
+  seedBaseline(near);
+  donor(near, 'near', 105);
+  const blocked = near.pool.prepareRoute({ sessionId: 'new-near', digest, now: BASE });
+  assert.equal(blocked.action, 'kept');
+  assert.equal(blocked.tier, undefined);
+  assert.equal(near.store.routeFor('near').value, 'ses_near');
+
+  const faster = setup(t);
+  seedBaseline(faster);
+  donor(faster, 'faster', 115);
+  const adopted = faster.pool.prepareRoute({ sessionId: 'new-faster', digest, now: BASE });
+  assert.equal(adopted.action, 'adopted');
+  assert.equal(adopted.sourceSessionId, 'faster');
+  assert.equal(adopted.tier, 2);
+});
+
+test('tier 2 requires poolSpeedMinSamples bound samples for the speed gate', async (t) => {
+  const digest = digestFor('shared prefix');
+  const ctx = setup(t, { poolSpeedMinSamples: 8 });
+  for (let index = 0; index < 8; index += 1) {
+    ctx.store.recordSample('baseline', {
+      ttftMs: 2000,
+      tps: 100,
+      hitPct: 90,
+      inputTokens: 1000,
+      cacheReadTokens: 900,
+      at: BASE - 200000 + index,
+    }, 20);
+  }
+  ctx.store.setRoute('thin', route('ses_thin', {
     rotatedAt: BASE - 7200000,
-    digest: lowMatch.chunks,
-    digestChars: lowMatch.chars,
-    samples: samples(5, 3000, 100),
+    digest: digest.chunks,
+    digestChars: digest.chars,
+    samples: samples(5, 1000, 300),
     lastActiveAt: BASE - 7200000,
     pooledAt: BASE - 7200000,
   }));
-  const tier2Only = off.pool.prepareRoute({ sessionId: 'new-tier2-only', digest: other, now: BASE });
-  assert.equal(tier2Only.action, 'adopted');
-  assert.equal(tier2Only.sourceSessionId, 'slow-tier2');
-  assert.equal(tier2Only.tier, 2);
+  const kept = ctx.pool.prepareRoute({ sessionId: 'new-thin', digest, now: BASE });
+  assert.equal(kept.action, 'kept');
+  assert.equal(ctx.store.routeFor('thin').value, 'ses_thin');
+});
+
+test('tier 2 skips the speed gate while the request ring is too small', async (t) => {
+  const digest = digestFor('shared prefix');
+  const ctx = setup(t);
+  for (let index = 0; index < 2; index += 1) {
+    ctx.store.recordSample('baseline', {
+      ttftMs: 2000,
+      tps: 100,
+      hitPct: 90,
+      inputTokens: 1000,
+      cacheReadTokens: 900,
+      at: BASE - 200000 + index,
+    }, 20);
+  }
+  ctx.store.setRoute('cold', route('ses_cold', {
+    rotatedAt: BASE - 7200000,
+    digest: digest.chunks,
+    digestChars: digest.chars,
+    samples: samples(5, 3000, 90),
+    lastActiveAt: BASE - 7200000,
+    pooledAt: BASE - 7200000,
+  }));
+  const adopted = ctx.pool.prepareRoute({ sessionId: 'new-cold', digest, now: BASE });
+  assert.equal(adopted.action, 'adopted');
+  assert.equal(adopted.sourceSessionId, 'cold');
 });
 
 test('pool effect compares first-request hits for adopted and fresh sessions', async (t) => {
