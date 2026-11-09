@@ -22,8 +22,8 @@ function setup(t, overrides = {}) {
     poolEnabled: true,
     poolIdleMs: 180000,
     poolMatchPct: 60,
-    poolMinTps: 70,
-    poolMaxTtftMs: 10000,
+    poolMinTps: 80,
+    poolMaxTtftMs: 8000,
     poolSampleSize: 5,
     poolTier1Ms: 3600000,
     poolExpireMs: 86400000,
@@ -88,6 +88,7 @@ function route(value, options = {}) {
     samples: options.samples || [],
     pooledAt: options.pooledAt == null ? null : options.pooledAt,
     sleepingAt: options.sleepingAt == null ? null : options.sleepingAt,
+    ...options,
   };
 }
 
@@ -159,7 +160,7 @@ test('tier 1 wins over a better tier-2 score, and tier 2 ranks by TTFT and throu
   ctx.store.setRoute('tier1', route('ses_tier1', {
     digest: digest.chunks,
     digestChars: digest.chars,
-    samples: samples(5, 3000, 80),
+    samples: samples(5, 3000, 90),
     lastActiveAt: BASE - 600000,
     pooledAt: BASE - 600000,
   }));
@@ -179,7 +180,7 @@ test('tier 1 wins over a better tier-2 score, and tier 2 ranks by TTFT and throu
   ctx.store.setRoute('tier1', route('ses_tier1b', {
     digest: digest.chunks,
     digestChars: digest.chars,
-    samples: samples(5, 3000, 80),
+    samples: samples(5, 3000, 90),
     lastActiveAt: BASE - 600000,
     pooledAt: null,
   }));
@@ -196,7 +197,7 @@ test('tier 1 wins over a better tier-2 score, and tier 2 ranks by TTFT and throu
     rotatedAt: BASE - 7200000,
     digest: digest.chunks,
     digestChars: digest.chars,
-    samples: samples(5, 1000, 72),
+    samples: samples(5, 1000, 100),
     lastActiveAt: BASE - 7200000,
     pooledAt: BASE - 7200000,
   }));
@@ -206,7 +207,229 @@ test('tier 1 wins over a better tier-2 score, and tier 2 ranks by TTFT and throu
   assert.equal(second.tier, 2);
 });
 
-test('a session reclaims its own pooled code but falls back to a fresh one when it no longer qualifies', async (t) => {
+test('tier 2 has no prefix-match floor, while tier 1 still does', async (t) => {
+  const lowMatch = digestFor('alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha');
+  const other = digestFor('beta beta beta beta beta beta beta beta beta beta');
+
+  const tier1 = setup(t);
+  tier1.store.setRoute('old', route('ses_tier1_low', {
+    digest: lowMatch.chunks,
+    digestChars: lowMatch.chars,
+    samples: samples(5, 2000, 100),
+    lastActiveAt: BASE - 600000,
+    pooledAt: BASE - 600000,
+  }));
+  const kept = tier1.pool.prepareRoute({ sessionId: 'new-tier1', digest: other, now: BASE });
+  assert.notEqual(kept.action, 'adopted');
+  assert.equal(kept.tier, undefined);
+
+  const tier2 = setup(t);
+  tier2.store.setRoute('old', route('ses_tier2_low', {
+    rotatedAt: BASE - 7200000,
+    digest: lowMatch.chunks,
+    digestChars: lowMatch.chars,
+    samples: samples(5, 1000, 200),
+    lastActiveAt: BASE - 7200000,
+    pooledAt: BASE - 7200000,
+  }));
+  const adopted = tier2.pool.prepareRoute({ sessionId: 'new-tier2', digest: other, now: BASE });
+  assert.equal(adopted.action, 'adopted');
+  assert.equal(adopted.tier, 2);
+  assert.equal(adopted.matchPct, 0);
+});
+
+test('cross-tier fallback ranks tier 1 and tier 2 together by speed', async (t) => {
+  const lowMatch = digestFor('alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha');
+  const other = digestFor('beta beta beta beta beta beta beta beta beta beta');
+
+  const ctx = setup(t);
+  ctx.store.setRoute('fast-tier1', route('ses_fast_t1', {
+    digest: lowMatch.chunks,
+    digestChars: lowMatch.chars,
+    samples: samples(5, 1000, 300),
+    lastActiveAt: BASE - 600000,
+    pooledAt: BASE - 600000,
+  }));
+  ctx.store.setRoute('slow-tier2', route('ses_slow_t2', {
+    rotatedAt: BASE - 7200000,
+    digest: lowMatch.chunks,
+    digestChars: lowMatch.chars,
+    samples: samples(5, 3000, 100),
+    lastActiveAt: BASE - 7200000,
+    pooledAt: BASE - 7200000,
+  }));
+  const combined = ctx.pool.prepareRoute({ sessionId: 'new-combined', digest: other, now: BASE });
+  assert.equal(combined.action, 'adopted');
+  assert.equal(combined.sourceSessionId, 'fast-tier1');
+  assert.equal(combined.tier, 1);
+  assert.equal(combined.matchPct, 0);
+
+  const off = setup(t, { poolCrossTierFallback: false });
+  off.store.setRoute('fast-tier1', route('ses_fast_t1', {
+    digest: lowMatch.chunks,
+    digestChars: lowMatch.chars,
+    samples: samples(5, 1000, 300),
+    lastActiveAt: BASE - 600000,
+    pooledAt: BASE - 600000,
+  }));
+  off.store.setRoute('slow-tier2', route('ses_slow_t2', {
+    rotatedAt: BASE - 7200000,
+    digest: lowMatch.chunks,
+    digestChars: lowMatch.chars,
+    samples: samples(5, 3000, 100),
+    lastActiveAt: BASE - 7200000,
+    pooledAt: BASE - 7200000,
+  }));
+  const tier2Only = off.pool.prepareRoute({ sessionId: 'new-tier2-only', digest: other, now: BASE });
+  assert.equal(tier2Only.action, 'adopted');
+  assert.equal(tier2Only.sourceSessionId, 'slow-tier2');
+  assert.equal(tier2Only.tier, 2);
+});
+
+test('pool effect compares first-request hits for adopted and fresh sessions', async (t) => {
+  const ctx = setup(t);
+  const digest = digestFor('same conversation');
+  ctx.store.setRoute('old', route('ses_old', {
+    digest: digest.chunks,
+    digestChars: digest.chars,
+    samples: samples(5, 2000, 100),
+    pooledAt: BASE - 600000,
+  }));
+  const adopted = ctx.pool.prepareRoute({ sessionId: 'adopted', digest, now: BASE });
+  assert.equal(adopted.action, 'adopted');
+  ctx.store.recordSample('adopted', {
+    ttftMs: 2700,
+    tps: 95,
+    hitPct: 61.3,
+    inputTokens: 50000,
+    cacheReadTokens: 45000,
+    at: BASE + 1,
+  }, 20);
+
+  const fresh = ctx.pool.prepareRoute({ sessionId: 'fresh', digest: digestFor('unrelated conversation'), now: BASE + 2 });
+  assert.notEqual(fresh.action, 'adopted');
+  ctx.store.recordSample('fresh', {
+    ttftMs: 9000,
+    tps: 90,
+    hitPct: 0,
+    inputTokens: 50000,
+    cacheReadTokens: 0,
+    at: BASE + 3,
+  }, 20);
+
+  const adoptionEntry = ctx.store.history(10).find((entry) => entry.sessionId === 'adopted');
+  assert.equal(adoptionEntry.firstRequestAt, BASE + 1);
+
+  const effect = ctx.pool.stats().effect;
+  assert.equal(effect.adopted.count, 1);
+  assert.equal(effect.adopted.avgFirstHitPct, 61.3);
+  assert.equal(effect.adopted.avgMatchPct, 100);
+  assert.equal(effect.adopted.avgFirstCacheReadTokens, 45000);
+  assert.equal(effect.baseline.count, 1);
+  assert.equal(effect.baseline.avgFirstHitPct, 0);
+  assert.equal(effect.deltaPct, 61.3);
+  assert.equal(effect.samples.length, 2);
+  assert.equal(effect.samples[0].kind, 'baseline');
+  assert.equal(effect.samples[1].kind, 'adopted');
+});
+
+test('pool effect uses the marked first request, not a later warm one', async (t) => {
+  const ctx = setup(t);
+  const digest = digestFor('marked first');
+  const firstAt = BASE;
+  ctx.store.setRoute('adopted2', route('ses_adopted2', {
+    digest: digest.chunks,
+    digestChars: digest.chars,
+    samples: [],
+    rotatedAt: firstAt,
+    reason: 'pool-adopted',
+    basis: 'pool-match',
+    firstRequestAt: null,
+    awaitingFirstRequest: true,
+  }));
+  ctx.store.recordSample('adopted2', {
+    ttftMs: 9000,
+    tps: 80,
+    hitPct: 0,
+    inputTokens: 50000,
+    cacheReadTokens: 0,
+    at: firstAt,
+  }, 20);
+  ctx.store.recordSample('adopted2', {
+    ttftMs: 1000,
+    tps: 200,
+    hitPct: 99,
+    inputTokens: 1000,
+    cacheReadTokens: 990,
+    at: firstAt + 1000,
+  }, 20);
+  const effect = ctx.pool.stats().effect;
+  assert.equal(effect.adopted.count, 1);
+  assert.equal(effect.adopted.avgFirstHitPct, 0);
+  assert.equal(effect.samples[0].firstHitPct, 0);
+});
+
+test('pool effect skips a later request when the first-request marker is outside the ring', async (t) => {
+  const ctx = setup(t);
+  const digest = digestFor('late warm');
+  const firstAt = BASE - 600000;
+  ctx.store.setRoute('late', route('ses_late', {
+    digest: digest.chunks,
+    digestChars: digest.chars,
+    samples: samples(5, 2000, 100),
+    rotatedAt: firstAt,
+    reason: 'pool-adopted',
+    basis: 'pool-match',
+    firstRequestAt: firstAt,
+    awaitingFirstRequest: false,
+  }));
+  ctx.store.recordSample('late', {
+    ttftMs: 1000,
+    tps: 100,
+    hitPct: 99,
+    inputTokens: 1000,
+    cacheReadTokens: 990,
+    at: BASE,
+  }, 20);
+  const effect = ctx.pool.stats().effect;
+  assert.equal(effect.adopted.count, 0);
+  assert.equal(effect.samples.some((sample) => sample.firstHitPct === 99), false);
+});
+
+test('pool effect uses the persisted adoption snapshot after the request ring evicts it', (t) => {
+  const ctx = setup(t);
+  const pool = new SessionPool({
+    store: {
+      recentRequests: () => [],
+      history: () => [],
+      routes: () => [],
+      poolEvents: () => [{
+        at: BASE,
+        role: 'adopted',
+        sessionId: 's',
+        matchPct: 95.9,
+        firstRequest: {
+          at: BASE + 1000,
+          hitPct: 0,
+          ttftMs: 3000,
+          tps: 100,
+          inputTokens: 42332,
+          cacheReadTokens: 0,
+        },
+      }],
+    },
+    config: ctx.config,
+    logger: quiet,
+  });
+  const effect = pool.effect();
+  assert.equal(effect.adopted.count, 1);
+  assert.equal(effect.adopted.avgFirstHitPct, 0);
+  assert.equal(effect.adopted.avgMatchPct, 95.9);
+  assert.equal(effect.samples[0].firstRequestAt, BASE + 1000);
+  assert.equal(effect.samples[0].firstHitPct, 0);
+});
+
+test('a reviving session always reclaims its own idle code, even when it no longer qualifies', async (t) => {
   const ctx = setup(t);
   const digest = digestFor('revive me');
   ctx.store.setRoute('s', route('ses_self', {
@@ -228,15 +451,38 @@ test('a session reclaims its own pooled code but falls back to a fresh one when 
   }));
   ctx.store.recordSample('slow', { ttftMs: 2000, tps: 50, at: BASE - 1000 }, 20);
   assert.equal(ctx.store.samplesFor('slow').length, 1);
-  const kept = ctx.pool.prepareRoute({ sessionId: 'slow', digest, now: BASE });
-  assert.equal(kept.action, 'kept');
-  assert.equal(kept.skipPrediction, false);
-  assert.notEqual(ctx.store.routeFor('slow').value, 'ses_slow');
-  assert.match(ctx.store.routeFor('slow').value, /^ses_[0-9a-f]{24}$/);
+  const revivedSlow = ctx.pool.prepareRoute({ sessionId: 'slow', digest, now: BASE });
+  assert.equal(revivedSlow.action, 'revived');
+  assert.equal(revivedSlow.route.value, 'ses_slow');
+  assert.equal(ctx.store.routeFor('slow').value, 'ses_slow');
   assert.equal(ctx.store.routeFor('slow').pooledAt, null);
-  assert.equal(ctx.store.routeFor('slow').samples.length, 0);
-  assert.equal(ctx.store.samplesFor('slow').length, 0);
-  assert.equal(ctx.store.routeFor('slow').reason, 'pool-fallback');
+  assert.equal(ctx.store.routeFor('slow').samples.length, 6);
+  assert.equal(ctx.store.samplesFor('slow').length, 1);
+});
+
+test('a reviving donor keeps its fresh replacement instead of adopting another code', async (t) => {
+  const ctx = setup(t);
+  const digest = digestFor('donor returns');
+  const otherDigest = digestFor('another prefix');
+  ctx.store.setRoute('donor', route('ses_fresh', {
+    digest: otherDigest.chunks,
+    digestChars: otherDigest.chars,
+    samples: samples(5, 1000, 100),
+    sleepingAt: BASE - 1000,
+  }));
+  ctx.store.setRoute('candidate', route('ses_candidate', {
+    digest: digest.chunks,
+    digestChars: digest.chars,
+    samples: samples(5, 400, 200),
+    pooledAt: BASE - 600000,
+    lastActiveAt: BASE - 600000,
+  }));
+  const result = ctx.pool.prepareRoute({ sessionId: 'donor', digest, now: BASE });
+  assert.equal(result.action, 'kept');
+  assert.equal(result.route.value, 'ses_fresh');
+  assert.equal(ctx.store.routeFor('donor').value, 'ses_fresh');
+  assert.equal(ctx.store.routeFor('donor').sleepingAt, null);
+  assert.notEqual(ctx.store.routeFor('donor').value, 'ses_candidate');
 });
 
 test('idle pooling requires a non-busy session and archive pools immediately', async (t) => {
@@ -323,7 +569,7 @@ test('a code evicted by the size cap does not churn back on the next scan', asyn
   assert.equal(ctx.pool.poolSession('one', 'idle', BASE + 4000), true);
 });
 
-test('codes inactive beyond the expiration window leave the pool and cannot return', async (t) => {
+test('codes inactive beyond the expiration window leave the pool, but the owner still reclaims its idle code on revival', async (t) => {
   const ctx = setup(t);
   const digest = digestFor('too old');
   ctx.store.setRoute('old', route('ses_old', {
@@ -343,8 +589,8 @@ test('codes inactive beyond the expiration window leave the pool and cannot retu
   assert.equal(result.action, 'kept');
   assert.notEqual(ctx.store.routeFor('new').value, 'ses_old');
 
-  // The owner coming back with an expired code also goes through the pool and
-  // must not resurrect the code that already left both tiers.
+  // The owner coming back still owns an idle code that was never reassigned,
+  // so revival returns it directly instead of sending it through the pool.
   ctx.store.setRoute('owner', route('ses_owner', {
     digest: digest.chunks,
     digestChars: digest.chars,
@@ -354,11 +600,12 @@ test('codes inactive beyond the expiration window leave the pool and cannot retu
   }));
   ctx.store.recordSample('owner', { ttftMs: 1000, tps: 100, at: BASE - 25 * 3600000 }, 20);
   const revived = ctx.pool.prepareRoute({ sessionId: 'owner', digest, now: BASE });
-  assert.equal(revived.action, 'kept');
-  assert.match(ctx.store.routeFor('owner').value, /^ses_[0-9a-f]{24}$/);
-  assert.notEqual(ctx.store.routeFor('owner').value, 'ses_owner');
-  assert.equal(ctx.store.routeFor('owner').reason, 'pool-fallback');
-  assert.equal(ctx.store.samplesFor('owner').length, 0);
+  assert.equal(revived.action, 'revived');
+  assert.equal(revived.route.value, 'ses_owner');
+  assert.equal(ctx.store.routeFor('owner').value, 'ses_owner');
+  assert.equal(ctx.store.routeFor('owner').poolEvictedAt, null);
+  assert.equal(ctx.store.routeFor('owner').samples.length, 6);
+  assert.equal(ctx.store.samplesFor('owner').length, 1);
 });
 
 test('a cache-cold rotation starts a fresh code with its own digest and samples', async (t) => {
@@ -369,4 +616,24 @@ test('a cache-cold rotation starts a fresh code with its own digest and samples'
   assert.equal(ctx.store.routeFor('s').pooledAt, BASE);
   ctx.pool.unpoolSession('s', BASE);
   assert.equal(ctx.store.routeFor('s').pooledAt, null);
+});
+
+test('pooling requires the tightened throughput and TTFT targets', async (t) => {
+  const ctx = setup(t);
+  const digest = digestFor('gate me');
+  const entry = (value, ttftMs, tps) => route(value, {
+    digest: digest.chunks,
+    digestChars: digest.chars,
+    samples: samples(5, ttftMs, tps),
+  });
+  // Throughput must exceed 80 tok/s; the TTFT cap is inclusive at 8s.
+  ctx.store.setRoute('slow-tps', entry('ses_slow_tps', 2000, 80));
+  assert.equal(ctx.pool.poolSession('slow-tps', 'idle', BASE), false);
+  ctx.store.setRoute('boundary-ttft', entry('ses_boundary_ttft', 8000, 100));
+  assert.equal(ctx.pool.poolSession('boundary-ttft', 'idle', BASE), true);
+  ctx.store.setRoute('slow-ttft', entry('ses_slow_ttft', 8001, 100));
+  assert.equal(ctx.pool.poolSession('slow-ttft', 'idle', BASE), false);
+  ctx.store.setRoute('fast', entry('ses_fast', 2000, 90));
+  assert.equal(ctx.pool.poolSession('fast', 'idle', BASE), true);
+  assert.equal(ctx.store.routeFor('fast').pooledAt, BASE);
 });

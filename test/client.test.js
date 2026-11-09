@@ -87,6 +87,7 @@ test('the performance panel shows the configured throughput threshold', () => {
               throughputThresholdTps: 60,
               stepTtftGraceMs: 2000,
               stepThroughputGraceTps: 5,
+              poolSampleSize: 5,
             },
             sessions: [{
               sessionId: 'session-abcdef123456',
@@ -132,7 +133,145 @@ test('the performance panel shows the configured throughput threshold', () => {
               afterTarget: 5,
               afterComplete: true,
             }],
-            pool: { enabled: true, total: 1, tier1: 1, tier2: 0, eligible: 1, lastAdoption: null },
+            pool: {
+              enabled: true,
+              total: 1,
+              tier1: 1,
+              tier2: 0,
+              eligible: 1,
+              minTps: 80,
+              maxTtftMs: 8000,
+              lastAdoption: null,
+              effect: {
+                adopted: { count: 1, measured: 1, avgFirstHitPct: 61.3, avgMatchPct: 95.9 },
+                baseline: { count: 1, measured: 1, avgFirstHitPct: 0 },
+                deltaPct: 61.3,
+                samples: [],
+              },
+              entries: [{
+                sessionId: 'session-abcdef123456',
+                code: 'ses_31dc46fc005c19836321a4a1',
+                pooledAt: 1700000000000,
+                lastActiveAt: 1700000000000,
+                ageMs: 3565927,
+                tier: 1,
+                eligible: true,
+                digestChunks: 512,
+                digestChars: 262144,
+                samples: 5,
+                avgTtftMs: 7215.6,
+                avgTps: 95.4,
+                score: 23.2,
+              }],
+            },
+            billionContext: { detected: false, root: 'C:\\missing\\billion-context\\sessions' },
+            statistics: {
+              requests: { total: 2, measured: 2, avgHitPct: 55, warm: 1, cold: 1, avgTtftMs: 2000, avgTps: 75 },
+            },
+            routes: {
+              'session-abcdef123456': {
+                sessionId: 'session-abcdef123456',
+                reason: 'pool-adopted',
+                poolRole: 'adopted',
+                rotatedAt: 1700000000500,
+                firstRequestAt: 1700000000600,
+              },
+            },
+            poolEvents: [{
+              at: 1700000000500,
+              role: 'adopted',
+              sessionId: 'session-abcdef123456',
+              sourceSessionId: 'session-old',
+              matchPct: 92.5,
+              tier: 1,
+              code: 'ses_aaaaaaaaaaaa',
+              donorCode: 'ses_bbbbbbbbbbbb',
+              donorTtftMs: 1200,
+              donorTps: 110,
+              donorSamples: 5,
+            }, {
+              at: 1700000000800,
+              role: 'revived',
+              sessionId: 'session-abcdef123456',
+              sourceSessionId: 'session-abcdef123456',
+              matchPct: null,
+              tier: null,
+              code: 'ses_aaaaaaaaaaaa',
+            }, {
+              at: 1700000001000,
+              role: 'adopted',
+              sessionId: 'session-no-marker',
+              sourceSessionId: 'session-old',
+              matchPct: 80,
+              tier: 1,
+              code: 'ses_cccccccccccc',
+            }, {
+              at: 1700000001200,
+              role: 'adopted',
+              sessionId: 'session-snapshot',
+              sourceSessionId: 'session-old',
+              matchPct: 88,
+              tier: 1,
+              code: 'ses_dddddddddddd',
+              firstRequest: {
+                at: 1700000001300,
+                ttftMs: 800,
+                tps: 150,
+                outputTokens: 50,
+                inputTokens: 100,
+                cacheReadTokens: 850,
+                hitPct: 85,
+              },
+            }],
+            requests: [{
+              sessionId: 'session-abcdef123456',
+              at: 1700000000700,
+              ttftMs: 1100,
+              tps: 120,
+              inputTokens: 100,
+              cacheReadTokens: 950,
+              hitPct: 99,
+            }, {
+              sessionId: 'session-other',
+              at: 1700000000650,
+              ttftMs: 1300,
+              tps: 100,
+              inputTokens: 100,
+              cacheReadTokens: 500,
+              hitPct: 50,
+            }, {
+              sessionId: 'session-abcdef123456',
+              at: 1700000000400,
+              ttftMs: 1500,
+              tps: 90,
+              inputTokens: 100,
+              cacheReadTokens: 100,
+              hitPct: 10,
+            }, {
+              sessionId: 'session-abcdef123456',
+              at: 1700000000600,
+              ttftMs: 1200,
+              tps: 110,
+              inputTokens: 100,
+              cacheReadTokens: 900,
+              hitPct: 90,
+            }, {
+              sessionId: 'session-abcdef123456',
+              at: 1700000000900,
+              ttftMs: 1000,
+              tps: 130,
+              inputTokens: 100,
+              cacheReadTokens: 300,
+              hitPct: 30,
+            }, {
+              sessionId: 'session-no-marker',
+              at: 1700000001100,
+              ttftMs: 900,
+              tps: 140,
+              inputTokens: 100,
+              cacheReadTokens: 700,
+              hitPct: 70,
+            }],
           },
         }, () => {}];
       }
@@ -180,4 +319,37 @@ test('the performance panel shows the configured throughput threshold', () => {
   assert.ok(texts.some((text) => text.includes('触发阈值: TTFT ≥ 14.0s 或吞吐 ≤ 55 tok/s')), texts.join('\n'));
   assert.ok(texts.some((text) => text.includes('旧版记录，未记录触发阈值')), texts.join('\n'));
   assert.ok(texts.some((text) => text.includes('路由池：1 个（一级 1、二级 0），合格 1')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('两级池 session code')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('池效果（首请求命中）')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('借入 1 次 · 首请求平均命中 61.3% · 匹配 95.9%')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('全新 1 次 · 首请求平均命中 0.0%')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('差值 +61.3 pp')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('一级池 · 1')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('ses_31dc46fc005c19836321a4a1')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('7.2 s')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('95 tok/s')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('5/5')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('23.2')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('未检测到 billion-context')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('近 2 次请求：平均命中 55.0%，热 1，冷 1')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('池替换记录')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('缓存命中记录')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('只显示每次从池中复用 code 后的第一条请求；同一会话收回 code 不显示。首请求会随池事件保存，请求记录淘汰后仍可查看。')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('复用')), texts.join('\n'));
+  assert.ok(texts.some((text) => text.includes('90.0%')), texts.join('\n'));
+  // Later warm requests, requests before the swap, and requests from sessions
+  // with no swap must not appear in the cache log.
+  assert.ok(!texts.some((text) => text.includes('99.0%')), texts.join('\n'));
+  assert.ok(!texts.some((text) => text.includes('50.0%')), texts.join('\n'));
+  assert.ok(!texts.some((text) => text.includes('10.0%')), texts.join('\n'));
+  // A session reclaiming its own code (revived) is not a pool replacement.
+  assert.ok(!texts.some((text) => text.includes('30.0%')), texts.join('\n'));
+  // An adoption without a persisted first-request marker cannot be attributed;
+  // a later request must not stand in for the missing first request.
+  assert.ok(!texts.some((text) => text.includes('70.0%')), texts.join('\n'));
+  // A persisted first-request snapshot remains visible after its request has
+  // left the 200-entry ring.
+  assert.ok(texts.some((text) => text.includes('85.0%')), texts.join('\n'));
+  // Without billion-context the fold chip is meaningless and must be hidden.
+  assert.ok(!texts.some((text) => text.includes('折叠 #3')), texts.join('\n'));
 });

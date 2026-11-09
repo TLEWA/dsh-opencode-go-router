@@ -225,6 +225,11 @@ test('mount wires request headers and stream hooks through a fake cordis context
   assert.equal(liveStatus.routing.lastAppliedSessionId, 's1');
   assert.equal(liveStatus.routing.lastAppliedValue, 'ses_mounted');
   assert.equal(liveStatus.eligibility.modelPrefix, 'deepseek');
+  assert.equal(liveStatus.billionContext.detected, false);
+  assert.equal(typeof liveStatus.billionContext.root, 'string');
+  assert.equal(liveStatus.statistics.requests.total, 0);
+  assert.deepEqual(liveStatus.requests, []);
+  assert.deepEqual(liveStatus.poolEvents, []);
   assert.equal(Array.isArray(liveStatus.history), true);
   assert.equal(liveStatus.history.length, 1);
   assert.equal(liveStatus.history[0].backfilled, true);
@@ -255,6 +260,7 @@ test('mount wires request headers and stream hooks through a fake cordis context
   assert.equal(typeof onStream, 'function');
   async function* source() {
     yield { type: 'text-delta' };
+    await delay(2);
     yield { type: 'usage', usage: { outputTokens: 12 } };
     yield { type: 'finish' };
   }
@@ -264,6 +270,10 @@ test('mount wires request headers and stream hooks through a fake cordis context
     () => source(),
   )) chunks.push(chunk.type);
   assert.deepEqual(chunks, ['text-delta', 'usage', 'finish']);
+  const afterStream = globalThis.__opencodeRouter.status();
+  assert.equal(afterStream.statistics.requests.total, 1);
+  assert.equal(afterStream.requests.length, 1);
+  assert.equal(afterStream.requests[0].sessionId, 's1');
 
   for (const disposer of disposers) disposer();
   await delay(20);

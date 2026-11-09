@@ -151,6 +151,95 @@ test('RouterStore trims samples and backs up corrupt state', async (t) => {
   assert.equal(backups.length, 1);
 });
 
+test('RouterStore keeps request and pool-event logs for the settings page', async (t) => {
+  const dir = tempDir(t);
+  const statePath = path.join(dir, 'state.json');
+  const store = new RouterStore({ statePath, logger: quiet, debounceMs: 0 });
+  store.recordSample('s1', { ttftMs: 1000, tps: 100, inputTokens: 100, cacheReadTokens: 900, hitPct: 90, at: 1000 });
+  store.recordSample('s2', { ttftMs: 3000, tps: 50, inputTokens: 800, cacheReadTokens: 200, hitPct: 20, at: 2000 });
+  const event = {
+    at: 1500,
+    role: 'adopted',
+    sessionId: 's1',
+    sourceSessionId: 's0',
+    matchPct: 92.5,
+    tier: 1,
+    code: 'ses_a',
+    donorCode: 'ses_b',
+    donorTtftMs: 1200,
+    donorTps: 110,
+    donorSamples: 5,
+  };
+  store.addPoolEvent(event);
+  // Same instant, session and role is one exchange, not two.
+  store.addPoolEvent(event);
+  store.addPoolEvent({ at: 1700, role: 'revived', sessionId: 's2', code: 'ses_c', matchPct: 100, tier: 2 });
+  assert.equal(store.poolEvents().length, 2);
+  assert.equal(store.recentRequests()[0].sessionId, 's2');
+  const stats = store.statistics();
+  assert.equal(stats.requests.total, 2);
+  assert.equal(stats.requests.avgHitPct, 55);
+  assert.equal(stats.requests.warm, 1);
+  assert.equal(stats.requests.cold, 1);
+  assert.equal(stats.requests.avgTtftMs, 2000);
+  assert.equal(stats.requests.avgTps, 75);
+  assert.equal(stats.pool.swaps, 1);
+  assert.equal(stats.pool.revivals, 1);
+  assert.equal(stats.pool.lastSwapAt, 1500);
+
+  await store.flush();
+  const reloaded = new RouterStore({ statePath, logger: quiet, debounceMs: 0 });
+  assert.equal(reloaded.recentRequests().length, 2);
+  assert.equal(reloaded.poolEvents().length, 2);
+  assert.equal(reloaded.statistics().requests.avgHitPct, 55);
+});
+
+test('RouterStore snapshots the first request on the adoption event', async (t) => {
+  const dir = tempDir(t);
+  const statePath = path.join(dir, 'state.json');
+  const store = new RouterStore({ statePath, logger: quiet, debounceMs: 0 });
+  store.setRoute('s1', {
+    value: 'ses_a',
+    reason: 'pool-adopted',
+    rotatedAt: 1500,
+    firstRequestAt: null,
+    awaitingFirstRequest: true,
+    samples: [],
+  });
+  store.addPoolEvent({ at: 1500, role: 'adopted', sessionId: 's1', sourceSessionId: 's0', code: 'ses_a' });
+  store.recordSample('s1', {
+    ttftMs: 1000,
+    tps: 100,
+    inputTokens: 100,
+    cacheReadTokens: 900,
+    hitPct: 90,
+    at: 1600,
+  });
+  let event = store.poolEvents().find((item) => item.role === 'adopted' && item.sessionId === 's1');
+  assert.equal(event.firstRequest.at, 1600);
+  assert.equal(event.firstRequest.hitPct, 90);
+  assert.equal(event.firstRequest.cacheReadTokens, 900);
+
+  // A later warm request must not overwrite the first-request snapshot.
+  store.recordSample('s1', {
+    ttftMs: 900,
+    tps: 120,
+    inputTokens: 100,
+    cacheReadTokens: 950,
+    hitPct: 99,
+    at: 1700,
+  });
+  event = store.poolEvents().find((item) => item.role === 'adopted' && item.sessionId === 's1');
+  assert.equal(event.firstRequest.at, 1600);
+  assert.equal(event.firstRequest.hitPct, 90);
+
+  await store.flush();
+  const reloaded = new RouterStore({ statePath, logger: quiet, debounceMs: 0 });
+  event = reloaded.poolEvents().find((item) => item.role === 'adopted' && item.sessionId === 's1');
+  assert.equal(event.firstRequest.at, 1600);
+  assert.equal(event.firstRequest.hitPct, 90);
+});
+
 test('RouterStore ignores non-finite and blank values', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-router-store-'));
   try {
