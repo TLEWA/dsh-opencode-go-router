@@ -23,7 +23,7 @@
 - 改 DEFAULTS 的缓存/路由/池阈值视为行为变更：说明理由、补测试，并在 CHANGELOG 写清影响。
 - `/opencode-router/status` 的公开数据必须脱敏（digest/samples），不要泄露 prompt、请求体或密钥。
 - 状态默认写 `$DSH_HOME/storages/opencode-router/state.json`；不要改成仓库内路径。
-- `README.md` 是英文主文档，`README.zh-CN.md` 是中文；两者标题、命令与限制要同步。
+- `README.md` 是中文主文档，`README.en.md` 是英文；两者标题、命令与限制要同步。
 - `npm test` 是 `node --test`；没有 build，不要给 `lib/` 增加生成的“源码”层。
 
 ## 每次改动

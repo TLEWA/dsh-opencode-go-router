@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Versioning follows
 
 ### Changed
 
+- Docs: README is now the Chinese primary document, and the English edition moved to `README.en.md`; synced the documentation contract in `ci.config.json`, `package.json` and AGENTS.md.
 - Removed `poolCrossTierFallback`. When tier 1 has no qualified candidate, tier-1 codes that missed `poolMatchPct` no longer join the tier-2 ranking; they stay with their own session. Tier 2 still has no prefix-match floor.
 - Tier 2 gains a speed gate: the donor's average throughput must reach the session baseline times `poolSpeedGainRatio` (1.1 by default), and both the donor and the baseline need at least `poolSpeedMinSamples` (5 by default) bound samples. The baseline prefers the session's own bound samples and falls back to the median throughput of the last 200 requests; when no baseline can be measured the gate stays open. An older code slower than the baseline is no longer swapped in, so a prefix match cannot cost the new session throughput.
 - The status route and settings page replace `crossTierFallback` in the `pool` summary with `speedGainRatio` and `speedMinSamples`.

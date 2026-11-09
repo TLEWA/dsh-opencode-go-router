@@ -19,7 +19,7 @@
     "pairs": [
       [
         "README.md",
-        "README.zh-CN.md"
+        "README.en.md"
       ],
       [
         "CHANGELOG.md",
@@ -28,7 +28,7 @@
     ],
     "required": [
       "README.md",
-      "README.zh-CN.md",
+      "README.en.md",
       "CHANGELOG.md",
       "CHANGELOG.en.md",
       "LICENSE",
@@ -40,7 +40,7 @@
     ],
     "published": [
       "README.md",
-      "README.zh-CN.md",
+      "README.en.md",
       "CHANGELOG.md",
       "CHANGELOG.en.md",
       "LICENSE"
@@ -52,7 +52,7 @@
       "lib/client.js",
       "cordis.patch.yml",
       "README.md",
-      "README.zh-CN.md",
+      "README.en.md",
       "CHANGELOG.md",
       "CHANGELOG.en.md",
       "LICENSE"
