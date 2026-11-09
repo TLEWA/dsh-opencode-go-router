@@ -1,67 +1,18 @@
-name: Release
+name: release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*.*.*']
 
 permissions:
   contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
-    name: Package and publish
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out the tagged commit
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Verify the tag matches package.json
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="$(node -p "require('./package.json').version")"
-          test "v${VERSION}" = "${GITHUB_REF_NAME}"
-          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
-
-      - name: Syntax check
-        run: npm run check
-
-      - name: Test
-        run: npm test
-
-      - name: Build the package
-        shell: bash
-        run: |
-          set -euo pipefail
-          TARBALL="$(npm pack --silent | tail -n 1)"
-          test -f "${TARBALL}"
-          STABLE="dsh-opencode-go-router.tgz"
-          cp "${TARBALL}" "${STABLE}"
-          sha256sum "${TARBALL}" "${STABLE}" > SHA256SUMS.txt
-          echo "TARBALL=${TARBALL}" >> "$GITHUB_ENV"
-          echo "STABLE=${STABLE}" >> "$GITHUB_ENV"
-
-      - name: Create the GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "${TARBALL}" "${STABLE}" SHA256SUMS.txt --clobber
-          else
-            gh release create "$tag" "${TARBALL}" "${STABLE}" SHA256SUMS.txt \
-              --title "dsh-opencode-go-router ${VERSION}" --generate-notes --verify-tag
-          fi
+    uses: TLEWA/dsh-plugin-ci/.github/workflows/reusable-release.yml@v1
+    secrets: inherit
