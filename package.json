@@ -1,6 +1,6 @@
 {
   "name": "dsh-opencode-go-router",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "DeepSeek Harness plugin: keep OpenCode Go routing ids warm across sessions and rotate them after cache-losing prefills or system-prompt rewrites, with or without billion-context.",
   "type": "module",
   "main": "lib/index.js",
