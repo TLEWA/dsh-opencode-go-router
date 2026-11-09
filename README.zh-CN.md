@@ -46,7 +46,7 @@ OpenCode Go 用 `x-opencode-session` 请求头把一条会话钉在某个上游�
 
 **前缀摘要。** 每条合格请求发出前，插件为系统提示词、工具定义、消息文本、工具参数和工具结果生成摘要；只保存分块的 SHA-256，不保存原文。命中率等于共同的前缀块数除以新会话的块数。一级池的老 code 至少要覆盖新前缀的 `poolMatchPct`（默认 60%）；二级池没有命中率下限。
 
-**两级池。** 一级池是不活跃时间小于 `poolTier1Ms`（默认 1 小时）的 code；二级池是 1–24 小时的 code。候选还必须满足：绑定该 code 的实测样本不少于 `poolSampleSize` 条、平均 TTFT 不超过 `poolMaxTtftMs`（8 秒）、平均吞吐高于 `poolMinTps`（80 tok/s）。一级候选按前缀命中率取最大（并列时取吞吐更高、TTFT 更低、最近更活跃者）。只有一级没有任何合格候选时才下落到二级。默认 `poolCrossTierFallback` 开启时，未达到一级前缀门槛的 code 也会和二级 code 一起按 `-(平均 TTFT 秒数 × 10) + 平均吞吐` 评分排序，取速度最快者；关闭后只按二级评分。二级没有前缀命中率下限：只要通过样本与速度门槛，即使命中率更低也会优先于新生成 code。
+**两级池。** 一级池是不活跃时间小于 `poolTier1Ms`（默认 1 小时）的 code；二级池是 1–24 小时的 code。候选还必须满足：绑定该 code 的实测样本不少于 `poolSampleSize` 条、平均 TTFT 不超过 `poolMaxTtftMs`（8 秒）、平均吞吐高于 `poolMinTps`（80 tok/s）。一级候选按前缀命中率取最大（并列时取吞吐更高、TTFT 更低、最近更活跃者）。只有一级没有任何合格候选时才下落到二级，而且要求换入确实能提速：借出 code 的平均吞吐必须达到会话基线（会话自身已绑定样本不少于 `poolSpeedMinSamples` 时用它，否则取最近 200 条请求吞吐的中位数）的 `poolSpeedGainRatio` 倍（默认 1.1），两边的样本都不少于 `poolSpeedMinSamples`（5）；测不出基线时门槛放行。二级没有前缀命中率下限：只要通过样本与速度门槛，即使命中率更低也会优先于新生成 code。
 
 **交换。** 新会话先新生成一个 code。若有合格候选，两者交换：新会话拿到老 code，连同它的摘要和绑定样本；老会话拿到新生成的 code，摘要与样本清空，并进入休眠，下次请求后空闲再重新入池。没有合格候选时，新会话保留自己的新 code。复苏不是借入：老会话只要自己的 code 还空闲，就一定拿回自己的 code，不参与 match、样本、层级或速度判定；如果 code 已经交给别的会话，就保留交换时得到的新 code，绝不改借其他 code。
 
@@ -125,7 +125,8 @@ dsh plugin add dsh-opencode-go-router --profile <profile>
 | `poolEnabled` | `true` | 启用热路由 id 池。 |
 | `poolIdleMs` | `180000` | 无待办工作时，空闲多久后 code 入池。 |
 | `poolMatchPct` | `60` | 一级池老 code 必须覆盖的前缀摘要命中率下限（二级池无下限）。 |
-| `poolCrossTierFallback` | `true` | 一级无合格候选时，让未达前缀门槛的一级 code 与二级 code 一起按速度评分排序。 |
+| `poolSpeedGainRatio` | `1.1` | 二级池借出 code 相对会话基线所需的最低吞吐倍数。 |
+| `poolSpeedMinSamples` | `5` | 借出方与基线各自需要的绑定样本数，之后速度门槛才做判断。 |
 | `poolMinTps` | `80` | 老 code 样本的平均吞吐下限（须严格高于）。 |
 | `poolMaxTtftMs` | `8000` | 老 code 样本的平均 TTFT 上限（8 秒含边界）。 |
 | `poolSampleSize` | `5` | code 成为候选前要求的绑定样本数。 |
@@ -141,7 +142,7 @@ dsh plugin add dsh-opencode-go-router --profile <profile>
 
 - `history` —— 最近的路由记录，最新的在前，含 `sessionId`、`at`、`reason`（`predicted-cold`、`pool-adopted` 或 `pool-donated`）、`basis`、`foldSeq`、`cacheHitPct`（预期命中率）、`step`、路由 `value`、切换前后 TTFT 与吞吐、样本进度，以及 `backfilled` 标记。新记录还带 `version` 与 `thresholds`（基础/生效 TTFT 与吞吐目标、失败步进）；池记录为 `thresholds: null`，并带 `poolMatchPct`、`poolTier`、`poolScore`、`poolSourceSessionId`、`poolRole` 和首请求标记 `firstRequestAt`；
 - `routes` —— 持久化路由；前缀摘要脱敏为 `digestChunks`（块数），绑定样本概括为 `poolSamples`；
-- `pool` —— `enabled`、`crossTierFallback`、各项上限、`total`、`tier1`、`tier2`、`eligible`、`lastAdoption`、`lastRevival`、`effect`（`adopted`/`baseline` 首请求命中汇总、`deltaPct` 与最近 `samples`），以及每个条目的 `sessionId`、`code`、`tier`、`eligible`、`samples`、`avgTtftMs`、`avgTps`、`score`、`digestChunks`、`digestChars`、`ageMs`、`pooledAt` 与 `lastActiveAt`；
+- `pool` —— `enabled`、`speedGainRatio`、`speedMinSamples`、各项上限、`total`、`tier1`、`tier2`、`eligible`、`lastAdoption`、`lastRevival`、`effect`（`adopted`/`baseline` 首请求命中汇总、`deltaPct` 与最近 `samples`），以及每个条目的 `sessionId`、`code`、`tier`、`eligible`、`samples`、`avgTtftMs`、`avgTps`、`score`、`digestChunks`、`digestChars`、`ageMs`、`pooledAt` 与 `lastActiveAt`；
 - `activity` —— 每个会话的进行中回合、工具调用、确认、后台任务和最近活动时间；它们决定能否入池；
 - `eligibility` —— 已配置的 provider 和固定的 `deepseek` 模型前缀；
 - `baselineReady` 与 `lastFoldSeq` —— 折叠诊断的游标；
