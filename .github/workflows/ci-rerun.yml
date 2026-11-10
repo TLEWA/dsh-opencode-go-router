@@ -15,14 +15,14 @@ permissions:
   pull-requests: read
   actions: write
 
-# 并发组用 PR 编号而不是源分支名：不同 fork 的同名分支（例如都叫 patch-1）会共享组，
-# 第一个 PR 的等待任务会被第二个 PR 取消，导致重跑丢失。
-concurrency:
-  group: ci-rerun-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
   rerun:
+    # 并发控制在 job 层而不是工作流层：job 的 if 不匹配时任务不会启动，
+    # 也就不会进入并发组。否则任意无关标签（增删）都会取消正在等待或执行的重跑。
+    # 组用 PR 编号而不是源分支名：不同 fork 的同名分支不会互相取消。
+    concurrency:
+      group: ci-rerun-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     # 只有放行类标签才会改变 gate 结论，其余标签不消耗 CI 分钟
     if: contains(fromJSON('["ci-change","human-approved"]'), github.event.label.name)
     runs-on: ubuntu-latest
