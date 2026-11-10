@@ -20,9 +20,11 @@ jobs:
     # 并发控制在 job 层而不是工作流层：job 的 if 不匹配时任务不会启动，
     # 也就不会进入并发组。否则任意无关标签（增删）都会取消正在等待或执行的重跑。
     # 组用 PR 编号而不是源分支名：不同 fork 的同名分支不会互相取消。
+    # cancel-in-progress 必须为 false：取消会在同一 SHA 上留下 cancelled 的 check run，
+    # mergeStateStatus 会变成 UNSTABLE。两个标签一起加时，两个任务串行执行，后一个会再重跑一次，幂等。
     concurrency:
       group: ci-rerun-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     # 只有放行类标签才会改变 gate 结论，其余标签不消耗 CI 分钟
     if: contains(fromJSON('["ci-change","human-approved"]'), github.event.label.name)
     runs-on: ubuntu-latest
@@ -51,5 +53,8 @@ jobs:
             echo "::warning::run $run_id 等待 10 分钟仍未结束，跳过本次重跑"
             exit 0
           fi
-          gh api -X POST "/repos/$REPO/actions/runs/$run_id/rerun"
-          echo "已重跑 ci run $run_id：同一 SHA、同一套 check suite"
+          if gh api -X POST "/repos/$REPO/actions/runs/$run_id/rerun" 2>/dev/null; then
+            echo "已重跑 ci run $run_id：同一 SHA、同一套 check suite"
+          else
+            echo "run $run_id 已在重跑或刚结束，跳过本次重复请求"
+          fi
