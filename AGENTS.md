@@ -25,6 +25,7 @@
 - 状态默认写 `$DSH_HOME/storages/opencode-router/state.json`；不要改成仓库内路径。
 - `README.md` 是中文主文档，`README.en.md` 是英文；两者标题、命令与限制要同步。
 - `npm test` 是 `node --test`；没有 build，不要给 `lib/` 增加生成的“源码”层。
+- store 写盘重试相关测试用 `waitFor` 轮询，不要固定 sleep；Windows Node 20 CI 已因 25ms 固定等待失败过一次。
 
 ## 每次改动
 
@@ -42,3 +43,16 @@ npm test
 ## 发布
 
 只由维护者打 tag 触发 `release.yml`。模型不得执行 `npm publish`、不得改版本号（除非在 `release/` 分支上且被明确要求）。
+
+<!-- dsh-review-policy:v1:start -->
+## Code Review Rules
+
+- 用中文报告可证明的严重缺陷，写清触发条件、实际影响和最小相关代码位置；避免风格建议及重复 CI 已完成的机械检查。未返回审阅结果不表示通过。
+- 检查宿主兼容性与用户数据边界：插件不得意外改变非目标请求、消息、配置或持久化数据；判断影响时遵守本仓明确记录的兼容例外。
+- 检查异常、取消、卸载与重复初始化路径：钩子、监听器和共享状态应正确清理；失败回退不得造成重复执行、数据丢失或泄漏敏感信息。
+- 审阅只发表意见。不得自动修复、添加人工批准标签、合并、改版本或发布；保留现有 CI 与人工批准流程。
+<!-- dsh-review-policy:v1:end -->
+
+### 本仓审阅重点
+
+- 保持薄壳热重载和 OpenCode Go DeepSeek 请求边界；路由池与状态持久化不得泄露 prompt、请求体或密钥。
