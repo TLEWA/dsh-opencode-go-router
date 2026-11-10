@@ -5,6 +5,8 @@ All notable changes to this project are documented here. Versioning follows
 
 ## [Unreleased]
 
+- Adopt shared Codex PR review rules and repository-specific review guidance; preserve existing CI, human approval, and release behavior.
+
 ### Fixed
 
 - Session monitors no longer grow without bound: new `monitorTtlMs` (one hour by default) and `monitorLimit` (200 by default). A monitor idle beyond the TTL is dropped and its timers are cleared; when the map is over the cap, the least recently active idle sessions are evicted first, and a session inside the active window is never evicted, so eviction cannot change a live route's fold baseline or prediction history. The `sessions` array of `/opencode-router/status` lists only retained monitors.
