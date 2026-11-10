@@ -8,6 +8,31 @@ import { RouterStore } from '../lib/store.js';
 
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 
+function waitFor(predicate, timeoutMs = 1000) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      let value;
+      try {
+        value = predicate();
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      if (value) {
+        resolve();
+        return;
+      }
+      if (Date.now() - started >= timeoutMs) {
+        reject(new Error('timed out waiting for condition'));
+        return;
+      }
+      setTimeout(tick, 5);
+    };
+    tick();
+  });
+}
+
 function tempDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-router-store-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -311,10 +336,8 @@ test('RouterStore backs off after a failed write and retries instead of waiting 
   assert.deepEqual(fs.readdirSync(dir).filter((name) => name.includes('.tmp-')), []);
 
   fsState.failRename = false;
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await waitFor(() => store.lastWriteError === null && store.retryTimer === null);
   assert.equal(store.dirty, false);
-  assert.equal(store.lastWriteError, null);
-  assert.equal(store.retryTimer, null);
   const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   assert.equal(saved.routes['session-1'].value, 'ses_abc');
   assert.deepEqual(fs.readdirSync(dir).filter((name) => name.includes('.tmp-')), []);
