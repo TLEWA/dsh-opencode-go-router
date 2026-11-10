@@ -25,6 +25,7 @@
 - 状态默认写 `$DSH_HOME/storages/opencode-router/state.json`；不要改成仓库内路径。
 - `README.md` 是中文主文档，`README.en.md` 是英文；两者标题、命令与限制要同步。
 - `npm test` 是 `node --test`；没有 build，不要给 `lib/` 增加生成的“源码”层。
+- store 写盘重试相关测试用 `waitFor` 轮询，不要固定 sleep；Windows Node 20 CI 已因 25ms 固定等待失败过一次。
 
 ## 每次改动
 
