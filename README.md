@@ -119,14 +119,16 @@ dsh plugin add dsh-opencode-go-router --profile <profile>
 | `biliSessionsDir` | `null` | 覆盖 billion-context 的会话根目录。 |
 | `biliProtocol` | `"openai"` | 状态子目录。 |
 | `biliUpstreamHost` | `"opencode.ai"` | 状态文件名里的 host 标签。 |
-| `maxSamples` | `20` | 每个会话保留的最大样本数。 |
+| `maxSamples` | `20` | 每个会话保留的最大样本数；小于 `sampleSize` 或 `poolSampleSize` 时自动抬高到两者较大值并记录启动告警。 |
 | `sessionActiveMs` | `600000` | 会话空闲超过该时长后停止轮询。 |
+| `monitorTtlMs` | `3600000` | 会话监视器空闲超过该时长即淘汰；会话重新活跃时会重新建立（折叠基线与预测历史从下一轮开始）。 |
+| `monitorLimit` | `200` | 同时保留的会话监视器上限；超出时先淘汰最久不活跃的空闲会话，活跃窗口内的会话永不被淘汰。 |
 | `minRotationGapMs` | `0` | 同一会话两次轮换之间的最小间隔。 |
 | `poolEnabled` | `true` | 启用热路由 id 池。 |
 | `poolIdleMs` | `180000` | 无待办工作时，空闲多久后 code 入池。 |
 | `poolMatchPct` | `60` | 一级池老 code 必须覆盖的前缀摘要命中率下限（二级池无下限）。 |
 | `poolSpeedGainRatio` | `1.1` | 二级池借出 code 相对会话基线所需的最低吞吐倍数。 |
-| `poolSpeedMinSamples` | `5` | 借出方与基线各自需要的绑定样本数，之后速度门槛才做判断。 |
+| `poolSpeedMinSamples` | `5` | 借出方与基线各自需要的绑定样本数，之后速度门槛才做判断；大于 `poolSampleSize` 时启动告警，因为速度门槛永远无法满足（不会擅自放宽门槛）。 |
 | `poolMinTps` | `80` | 老 code 样本的平均吞吐下限（须严格高于）。 |
 | `poolMaxTtftMs` | `8000` | 老 code 样本的平均 TTFT 上限（8 秒含边界）。 |
 | `poolSampleSize` | `5` | code 成为候选前要求的绑定样本数。 |
@@ -159,6 +161,7 @@ dsh plugin add dsh-opencode-go-router --profile <profile>
 - `statistics` —— 设置页标题栏用的请求汇总：`window.requests`、`window.poolEvents`、`requests.total/measured/avgHitPct/warm/cold/avgTtftMs/avgTps`，以及 `pool.swaps/revivals/lastSwapAt`；
 - `requests` —— 最近 100 条实测请求，最新的在前：`sessionId`、`at`、命中率、TTFT、吞吐、输入与缓存读取 token 数；
 - `poolEvents` —— 最近 100 条池替换与复苏记录，最新的在前：`role`（`adopted`/`revived`）、会话 id、code 与借出 code、命中率、层级、分数、借出方的 TTFT/吞吐/样本数，以及借入事件的 `firstRequest` 首请求快照（时间、命中率、TTFT、吞吐、输入与缓存读取 token）；
+- `sessions` —— 仍保留监视器的会话；空闲超过 `monitorTtlMs` 或超出 `monitorLimit` 被淘汰的会话不再出现；
 - `rotations`、`lastRequestAt`、`lastTickAt`、`lastError`；
 - `routing` —— 请求头钩子的计数与最近一次判定：`checks`、`applications`、`lastCheckedAt`、`lastCheckedSessionId`、`lastAppliedAt`、`lastAppliedSessionId`、`lastAppliedValue`、`lastReason`。`lastReason` 取值 `applied`、`no-route`、`existing-header`、`no-headers`、`disabled`、`not-target`。
 

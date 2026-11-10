@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { biliSessionKey, biliStatePathCandidates, normalizeConfig } from '../lib/core.js';
-import { SessionMonitor } from '../lib/monitor.js';
+import { RouterMonitor, SessionMonitor } from '../lib/monitor.js';
 import { RouterStore } from '../lib/store.js';
 
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
@@ -467,4 +467,112 @@ test('discovers a state file when the host label has changed', async (t) => {
   assert.equal(monitor.status().stateFile, alternate);
   assert.equal(monitor.status().baselineReady, true);
   assert.equal(monitor.status().lastFoldSeq, 1);
+});
+
+// RouterMonitor owns one SessionMonitor per DSH session. A long-running host
+// must not accumulate them forever, and /status must not expose evicted ones.
+function routerSetup(t, overrides = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-router-router-'));
+  const config = normalizeConfig({
+    biliSessionsDir: path.join(dir, 'bili'),
+    statePath: path.join(dir, 'state.json'),
+    pollIntervalMs: 1000,
+    requestCheckDelaysMs: [],
+    debug: false,
+    ...overrides,
+  });
+  let clock = 1000000;
+  const store = new RouterStore({ statePath: config.statePath, logger: quiet, debounceMs: 0 });
+  const router = new RouterMonitor({ config, store, logger: quiet, now: () => clock });
+  t.after(async () => {
+    router.dispose();
+    await store.dispose();
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelayMs: 50 });
+  });
+  return {
+    config,
+    router,
+    store,
+    now: () => clock,
+    advance: (ms) => { clock += ms; },
+  };
+}
+
+test('RouterMonitor evicts an idle session after the TTL and keeps the active one', async (t) => {
+  const { router, advance } = routerSetup(t, { monitorTtlMs: 60000, monitorLimit: 10 });
+  const idleA = router.ensure('idle-a');
+  const idleB = router.ensure('idle-b');
+  idleA.scheduleRefresh([600000]);
+  idleB.scheduleRefresh([600000]);
+  assert.equal(idleA.timers.size, 1);
+  assert.equal(router.monitors.size, 2);
+
+  advance(120000);
+  router.noteRequestFinished('active');
+  const active = router.monitors.get('active');
+  assert.ok(active);
+  assert.equal(router.monitors.size, 3);
+
+  await router.tickActive();
+
+  assert.equal(router.monitors.size, 1);
+  assert.equal(router.monitors.has('active'), true);
+  // A pruned monitor must not keep its refresh timers alive.
+  assert.equal(idleA.timers.size, 0);
+  assert.equal(idleB.timers.size, 0);
+  assert.deepEqual(router.status().map((session) => session.sessionId), ['active']);
+  assert.equal(active.lastRequestAt, 1120000);
+  // The map stays usable: a returning session gets a fresh monitor.
+  assert.notEqual(router.ensure('idle-a'), idleA);
+  assert.equal(router.monitors.size, 2);
+});
+
+test('RouterMonitor status drops a monitor evicted after the TTL without a tick', (t) => {
+  const { router, advance } = routerSetup(t, { monitorTtlMs: 60000 });
+  router.ensure('stale-a');
+  router.ensure('stale-b');
+  assert.equal(router.monitors.size, 2);
+
+  advance(120000);
+
+  assert.deepEqual(router.status(), []);
+  assert.equal(router.monitors.size, 0);
+});
+
+test('RouterMonitor cap evicts the least recently active idle sessions', async (t) => {
+  const { config, router, advance } = routerSetup(t, {
+    monitorTtlMs: 86400000,
+    monitorLimit: 3,
+    sessionActiveMs: 600000,
+  });
+  for (const id of ['old-1', 'old-2', 'old-3', 'old-4']) {
+    router.ensure(id);
+    advance(1000);
+  }
+  advance(700000);
+  router.noteRequestFinished('active-1');
+  router.noteRequestFinished('active-2');
+  assert.equal(router.monitors.size, 6);
+
+  await router.tickActive();
+
+  assert.equal(config.monitorLimit, 3);
+  assert.equal(router.monitors.size, 3);
+  assert.deepEqual([...router.monitors.keys()].sort(), ['active-1', 'active-2', 'old-4']);
+});
+
+test('RouterMonitor cap never drops a session active inside the window', (t) => {
+  const { router } = routerSetup(t, {
+    monitorTtlMs: 86400000,
+    monitorLimit: 2,
+    sessionActiveMs: 600000,
+  });
+  for (const id of ['live-1', 'live-2', 'live-3', 'live-4']) router.noteRequestFinished(id);
+  assert.equal(router.monitors.size, 4);
+
+  const removed = router.prune();
+
+  assert.equal(removed, 0);
+  assert.equal(router.monitors.size, 4);
+  assert.equal(router.status().length, 4);
 });

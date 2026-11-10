@@ -3,6 +3,14 @@
 本项目的所有重要变更都记录在这里，版本号遵循
 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 修复
+
+- 会话监视器不再无限增长：新增 `monitorTtlMs`（默认 1 小时）与 `monitorLimit`（默认 200）。空闲超过 TTL 的会话监视器会被丢弃并清理定时器；超出上限时先淘汰最久不活跃的空闲会话，活跃窗口内的会话永不淘汰，避免淘汰改变进行中路由的折叠基线与预测历史。`/opencode-router/status` 的 `sessions` 只列出仍保留的监视器。
+- 启动时交叉校验采样窗口：`maxSamples` 小于 `sampleSize` 或 `poolSampleSize` 时自动抬高到两者较大值并记录告警，避免轮换与池判定因为样本环被截断而永远等不满；`poolSpeedMinSamples` 大于 `poolSampleSize` 时记录告警，说明二级速度门槛永远无法满足（不擅自放宽门槛，合法配置的行为不变）。
+- `state.json` 写入失败不再只标记脏数据：每次 flush 先做最多 3 次即时尝试，仍失败则按指数退避（250ms 起、最长 60s）自动重试，直到写成功；每个失败的临时文件都会被清理，状态目录不再残留 `.tmp-*` 文件。
+
 ## [0.6.2] - 2026-11-10
 
 > 0.6.1 只发布到 npm，没有对应的 GitHub Release；本版本首次把 0.6.1 的池效果指标与首请求快照带入 GitHub Release。
