@@ -119,14 +119,16 @@ Because the plugin entry point reloads `lib/impl.js` with a cache-busting query 
 | `biliSessionsDir` | `null` | Override billion-context's sessions root. |
 | `biliProtocol` | `"openai"` | State subdirectory. |
 | `biliUpstreamHost` | `"opencode.ai"` | Host label used in the state filename. |
-| `maxSamples` | `20` | Maximum samples kept per session. |
+| `maxSamples` | `20` | Maximum samples kept per session; raised automatically to the larger of `sampleSize` and `poolSampleSize` with a startup warning when set lower. |
 | `sessionActiveMs` | `600000` | Stop polling a session after this idle time. |
+| `monitorTtlMs` | `3600000` | Drop a session monitor idle for longer than this; a returning session gets a fresh one (its fold baseline and prediction history restart on the next tick). |
+| `monitorLimit` | `200` | Maximum retained session monitors; when over the cap the least recently active idle sessions are evicted first, and a session inside the active window is never evicted. |
 | `minRotationGapMs` | `0` | Minimum time between rotations for one session. |
 | `poolEnabled` | `true` | Enable the warm routing-id pool. |
 | `poolIdleMs` | `180000` | Idle time with no pending work before a code enters the pool. |
 | `poolMatchPct` | `60` | Minimum prefix-digest match for a tier-1 donor code (tier 2 has no floor). |
 | `poolSpeedGainRatio` | `1.1` | Minimum throughput gain over the session baseline for a tier-2 donor. |
-| `poolSpeedMinSamples` | `5` | Bound samples required on the donor and on the baseline before the tier-2 speed gate decides. |
+| `poolSpeedMinSamples` | `5` | Bound samples required on the donor and on the baseline before the tier-2 speed gate decides; a startup warning is logged when it exceeds `poolSampleSize`, because the gate can then never be satisfied (the gate is not weakened automatically). |
 | `poolMinTps` | `80` | Minimum average throughput of a donor code's samples (strictly above). |
 | `poolMaxTtftMs` | `8000` | Maximum average TTFT of a donor code's samples (8 s inclusive). |
 | `poolSampleSize` | `5` | Code-bound samples required before a code can be a donor. |
@@ -159,6 +161,7 @@ Because the plugin entry point reloads `lib/impl.js` with a cache-busting query 
 - `statistics` — request totals for the settings header: `window.requests`, `window.poolEvents`, `requests.total/measured/avgHitPct/warm/cold/avgTtftMs/avgTps`, and `pool.swaps/revivals/lastSwapAt`;
 - `requests` — the latest 100 measured requests, newest first: `sessionId`, `at`, hit percentage, TTFT, throughput, input and cache-read tokens;
 - `poolEvents` — the latest 100 pool swaps and revivals, newest first: `role` (`adopted`/`revived`), session ids, code and donor code, match percentage, tier, score, donor TTFT/throughput/sample count, and for adoptions the persisted `firstRequest` snapshot (time, hit, TTFT, throughput, input and cache-read tokens);
+- `sessions` — sessions whose monitor is still retained; a session evicted after `monitorTtlMs` or by `monitorLimit` no longer appears;
 - `rotations`, `lastRequestAt`, `lastTickAt`, `lastError`;
 - `routing` — header-hook counters and the latest decision: `checks`, `applications`, `lastCheckedAt`, `lastCheckedSessionId`, `lastAppliedAt`, `lastAppliedSessionId`, `lastAppliedValue`, `lastReason`. `lastReason` is `applied`, `no-route`, `existing-header`, `no-headers`, `disabled`, or `not-target`.
 

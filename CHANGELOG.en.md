@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. Versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Session monitors no longer grow without bound: new `monitorTtlMs` (one hour by default) and `monitorLimit` (200 by default). A monitor idle beyond the TTL is dropped and its timers are cleared; when the map is over the cap, the least recently active idle sessions are evicted first, and a session inside the active window is never evicted, so eviction cannot change a live route's fold baseline or prediction history. The `sessions` array of `/opencode-router/status` lists only retained monitors.
+- Sample windows are cross-checked at startup: when `maxSamples` is below `sampleSize` or `poolSampleSize` it is raised to the larger of the two with a warning, so rotation and pool gates cannot wait forever on a truncated sample ring; when `poolSpeedMinSamples` exceeds `poolSampleSize` a warning states that the tier-2 speed gate can never be satisfied (the gate is not weakened automatically, and valid configurations behave exactly as before).
+- A failed `state.json` write no longer only marks the state dirty: each flush makes up to three immediate attempts, and a persistent failure schedules an exponential-backoff retry (starting at 250 ms, capped at 60 s) until the write succeeds; every failed attempt unlinks its tmp file, so no `.tmp-*` debris is left in the state directory.
+
 ## [0.6.2] - 2026-11-10
 
 > 0.6.1 was published to npm without a GitHub Release; this is the first GitHub Release that also contains 0.6.1's pool-effect metrics and first-request snapshots.

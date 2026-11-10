@@ -54,6 +54,39 @@ test('normalizeConfig applies defaults and clamps', () => {
   assert.equal(config.statePath.endsWith(path.join('storages', 'opencode-router', 'state.json')), true);
 });
 
+test('normalizeConfig reconciles sample windows instead of silently disabling them', () => {
+  const warnings = [];
+  const config = normalizeConfig(
+    { sampleSize: 30, maxSamples: 20, poolSampleSize: 25 },
+    { warn: (line) => warnings.push(line) },
+  );
+  assert.equal(config.sampleSize, 30);
+  assert.equal(config.poolSampleSize, 25);
+  assert.equal(config.maxSamples, 30);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /maxSamples 20/);
+  assert.match(warnings[0], /sampleSize 30/);
+  assert.match(warnings[0], /poolSampleSize 25/);
+
+  const poolWarnings = [];
+  const pool = normalizeConfig(
+    { poolSpeedMinSamples: 30, poolSampleSize: 10 },
+    { warn: (line) => poolWarnings.push(line) },
+  );
+  assert.equal(pool.poolSpeedMinSamples, 30);
+  assert.equal(pool.poolSampleSize, 10);
+  assert.equal(poolWarnings.length, 1);
+  assert.match(poolWarnings[0], /poolSpeedMinSamples 30/);
+  assert.match(poolWarnings[0], /poolSampleSize 10/);
+
+  const quiet = [];
+  const defaults = normalizeConfig({}, { warn: (line) => quiet.push(line) });
+  assert.deepEqual(quiet, []);
+  assert.equal(defaults.maxSamples, 20);
+  assert.equal(defaults.sampleSize, 5);
+  assert.equal(defaults.poolSpeedMinSamples, 5);
+});
+
 test('isTargetRequest only accepts OpenCode Go DeepSeek-series models', () => {
   const config = normalizeConfig({ providers: ['opencode-go'], models: [] });
   assert.equal(isTargetRequest({ provider: 'opencode-go', model: 'deepseek-v4.1-flash' }, config), true);

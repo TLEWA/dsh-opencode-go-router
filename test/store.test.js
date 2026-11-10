@@ -1,11 +1,37 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { RouterStore } from '../lib/store.js';
 
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
+
+function waitFor(predicate, timeoutMs = 1000) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      let value;
+      try {
+        value = predicate();
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      if (value) {
+        resolve();
+        return;
+      }
+      if (Date.now() - started >= timeoutMs) {
+        reject(new Error('timed out waiting for condition'));
+        return;
+      }
+      setTimeout(tick, 5);
+    };
+    tick();
+  });
+}
 
 function tempDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-router-store-'));
@@ -250,4 +276,69 @@ test('RouterStore ignores non-finite and blank values', () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+function flakyFs(state, transient) {
+  return {
+    mkdir: (...args) => fsp.mkdir(...args),
+    writeFile: (...args) => fsp.writeFile(...args),
+    unlink: (...args) => fsp.unlink(...args),
+    rename: async (from, to) => {
+      state.renameCalls += 1;
+      const transientLeft = transient && transient.left > 0;
+      if (transientLeft) transient.left -= 1;
+      if (state.failRename || transientLeft) throw new Error('simulated rename failure');
+      await fsp.rename(from, to);
+    },
+  };
+}
+
+test('RouterStore retries a failed state write and clears its tmp file', async (t) => {
+  const dir = tempDir(t);
+  const statePath = path.join(dir, 'state.json');
+  const fsState = { renameCalls: 0, failRename: false };
+  const fsMock = flakyFs(fsState, { left: 2 });
+  const store = new RouterStore({
+    statePath,
+    logger: quiet,
+    debounceMs: 0,
+    fs: fsMock,
+    writeAttempts: 3,
+  });
+  store.setRoute('session-1', { value: 'ses_abc' });
+  await store.flush();
+  assert.equal(fsState.renameCalls, 3);
+  assert.equal(store.lastWriteError, null);
+  const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(saved.routes['session-1'].value, 'ses_abc');
+  assert.deepEqual(fs.readdirSync(dir).filter((name) => name.includes('.tmp-')), []);
+});
+
+test('RouterStore backs off after a failed write and retries instead of waiting for the next touch', async (t) => {
+  const dir = tempDir(t);
+  const statePath = path.join(dir, 'state.json');
+  const fsState = { renameCalls: 0, failRename: true };
+  const store = new RouterStore({
+    statePath,
+    logger: quiet,
+    debounceMs: 0,
+    fs: flakyFs(fsState),
+    writeAttempts: 2,
+    retryDelayMs: 1,
+    retryMaxDelayMs: 4,
+  });
+  store.setRoute('session-1', { value: 'ses_abc' });
+  await store.flush();
+  assert.equal(fsState.renameCalls, 2);
+  assert.equal(store.dirty, true);
+  assert.ok(store.lastWriteError instanceof Error);
+  assert.ok(store.retryTimer, 'expected a backoff timer after the failed write');
+  assert.deepEqual(fs.readdirSync(dir).filter((name) => name.includes('.tmp-')), []);
+
+  fsState.failRename = false;
+  await waitFor(() => store.lastWriteError === null && store.retryTimer === null);
+  assert.equal(store.dirty, false);
+  const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(saved.routes['session-1'].value, 'ses_abc');
+  assert.deepEqual(fs.readdirSync(dir).filter((name) => name.includes('.tmp-')), []);
 });
