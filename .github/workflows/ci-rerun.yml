@@ -1,0 +1,55 @@
+name: ci-rerun
+
+# 标签变化不新建 CI run，而是重跑同一 commit 上已有的 ci run。
+# 原因：新建 run 会在同一个 SHA 上留下第二套 check suite，ruleset 无法确定哪套有效，
+# PR 会停在 mergeStateStatus=BLOCKED，即使 gh pr checks 看起来全绿。
+# 重跑只是原 run 的新 attempt，check run 原位替换，状态始终只有一套。
+# 用 pull_request_target 而不是 pull_request：fork PR 的 pull_request 事件只有只读 token，
+# 拿不到 actions: write 就重跑不了；本工作流不检出、不执行 PR 代码，只用 API 重跑自己仓的 run。
+on:
+  pull_request_target:
+    types: [labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write
+
+jobs:
+  rerun:
+    # 并发控制在 job 层而不是工作流层：job 的 if 不匹配时任务不会启动，
+    # 也就不会进入并发组。否则任意无关标签（增删）都会取消正在等待或执行的重跑。
+    # 组用 PR 编号而不是源分支名：不同 fork 的同名分支不会互相取消。
+    concurrency:
+      group: ci-rerun-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    # 只有放行类标签才会改变 gate 结论，其余标签不消耗 CI 分钟
+    if: contains(fromJSON('["ci-change","human-approved"]'), github.event.label.name)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 重跑该 commit 上最近一次 ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          run_id=$(gh api "/repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+            --jq '[.workflow_runs[] | select(.name == "ci")] | sort_by(.created_at) | last | .id // empty')
+          if [ -z "$run_id" ]; then
+            echo '该 commit 上没有 ci run（例如只有 push 触发的构建），本次标签变化无需重跑'
+            exit 0
+          fi
+          for _ in $(seq 1 60); do
+            status=$(gh api "/repos/$REPO/actions/runs/$run_id" --jq .status)
+            if [ "$status" = 'completed' ]; then break; fi
+            echo "run $run_id 仍在 $status，等待后再重跑…"
+            sleep 10
+          done
+          status=$(gh api "/repos/$REPO/actions/runs/$run_id" --jq .status)
+          if [ "$status" != 'completed' ]; then
+            echo "::warning::run $run_id 等待 10 分钟仍未结束，跳过本次重跑"
+            exit 0
+          fi
+          gh api -X POST "/repos/$REPO/actions/runs/$run_id/rerun"
+          echo "已重跑 ci run $run_id：同一 SHA、同一套 check suite"
