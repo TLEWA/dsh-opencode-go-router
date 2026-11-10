@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. Versioning follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.7.0] - 2026-11-11
 
 - Adopt shared Codex PR review rules and repository-specific review guidance; preserve existing CI, human approval, and release behavior.
 
