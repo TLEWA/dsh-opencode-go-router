@@ -220,6 +220,18 @@ test('RouterStore keeps request and pool-event logs for the settings page', asyn
   assert.equal(reloaded.statistics().requests.avgHitPct, 55);
 });
 
+test('RouterStore statistics ignore an unknown hitPct instead of counting it as 0%', async (t) => {
+  const dir = tempDir(t);
+  const store = new RouterStore({ statePath: path.join(dir, 'state.json'), logger: quiet, debounceMs: 0 });
+  store.recordSample('s1', { ttftMs: 1000, tps: 100, inputTokens: 100, cacheReadTokens: 900, hitPct: 90, at: 1000 });
+  store.recordSample('s2', { ttftMs: 3000, tps: 50, inputTokens: 0, cacheReadTokens: 0, hitPct: null, at: 2000 });
+  const stats = store.statistics();
+  assert.equal(stats.requests.total, 2);
+  assert.equal(stats.requests.measured, 1);
+  assert.equal(stats.requests.avgHitPct, 90);
+  assert.equal(stats.requests.cold, 0);
+});
+
 test('RouterStore snapshots the first request on the adoption event', async (t) => {
   const dir = tempDir(t);
   const statePath = path.join(dir, 'state.json');
@@ -337,6 +349,28 @@ test('RouterStore backs off after a failed write and retries instead of waiting 
 
   fsState.failRename = false;
   await waitFor(() => store.lastWriteError === null && store.retryTimer === null);
+  assert.equal(store.dirty, false);
+  const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(saved.routes['session-1'].value, 'ses_abc');
+  assert.deepEqual(fs.readdirSync(dir).filter((name) => name.includes('.tmp-')), []);
+});
+
+test('RouterStore dispose retries a failed flush once and still persists', async (t) => {
+  const dir = tempDir(t);
+  const statePath = path.join(dir, 'state.json');
+  const fsState = { renameCalls: 0, failRename: false };
+  const store = new RouterStore({
+    statePath,
+    logger: quiet,
+    debounceMs: 0,
+    fs: flakyFs(fsState, { left: 1 }),
+    writeAttempts: 1,
+    retryDelayMs: 1,
+  });
+  store.setRoute('session-1', { value: 'ses_abc' });
+  await store.dispose();
+  assert.equal(fsState.renameCalls, 2, 'the failed flush must be retried once inline');
+  assert.equal(store.disposed, true);
   assert.equal(store.dirty, false);
   const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   assert.equal(saved.routes['session-1'].value, 'ses_abc');

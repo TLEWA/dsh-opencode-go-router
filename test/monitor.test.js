@@ -207,6 +207,40 @@ test('no measured sample never rotates', async (t) => {
   assert.equal(store.routeFor(sessionId), null);
 });
 
+test('a restarted monitor restores the persisted idle gap before the first request', async (t) => {
+  const { config, store, now, advance } = routerSetup(t);
+  const sid = 'restart-session';
+  for (let i = 0; i < 5; i += 1) {
+    store.recordSample(sid, {
+      ttftMs: 25000,
+      tps: 10,
+      outputTokens: 100,
+      inputTokens: 1000,
+      cacheReadTokens: 99000,
+      hitPct: 99,
+      at: 500 + i,
+    }, 20);
+  }
+  store.setRoute(sid, { value: 'ses_warmbefore', reason: 'pool', rotatedAt: 500, lastActiveAt: 1000 });
+  await store.flush();
+
+  // A new host process: fresh store and monitor over the same state file.
+  const restartedStore = new RouterStore({ statePath: config.statePath, logger: quiet, debounceMs: 0 });
+  const restarted = new RouterMonitor({ config, store: restartedStore, logger: quiet, now });
+  t.after(async () => {
+    restarted.dispose();
+    await restartedStore.dispose();
+  });
+  advance(2 * 3600000);
+
+  const monitor = restarted.ensure(sid);
+  assert.equal(monitor.lastRequestAt, 1000, 'the idle baseline must come from persisted state');
+  const result = monitor.prepareRequest({ systemPrompt: 'system A', messageCount: 3 });
+  assert.ok(result.idleMs >= config.cacheTtlMs, 'the overnight gap must survive the restart');
+  assert.equal(result.basis, 'idle-expired');
+  assert.equal(result.rotated, true);
+});
+
 test('a system prompt rewrite is predicted cold', async (t) => {
   const { store, monitor } = setup(t);
   warmSlowSamples(store);

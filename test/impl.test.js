@@ -275,7 +275,13 @@ test('mount wires request headers and stream hooks through a fake cordis context
   assert.equal(afterStream.requests.length, 1);
   assert.equal(afterStream.requests[0].sessionId, 's1');
 
-  for (const disposer of disposers) disposer();
-  await delay(20);
+  const pending = disposers.map((disposer) => disposer());
+  assert.ok(
+    pending.every((value) => value && typeof value.then === 'function'),
+    'the dispose hook must return a promise so the host can await the state flush',
+  );
+  await Promise.all(pending);
+  const persisted = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(persisted.requests.length, 1, 'the last request must reach the state file on dispose');
   fs.rmSync(dir, { recursive: true, force: true });
 });
