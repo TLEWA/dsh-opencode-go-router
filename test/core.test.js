@@ -26,6 +26,7 @@ import {
   summarizeSamples,
   systemPromptFingerprint,
   systemPromptText,
+  VERSION,
 } from '../lib/core.js';
 
 test('normalizeConfig applies defaults and clamps', () => {
@@ -169,6 +170,15 @@ test('promptTokens and sampleCacheHitPct read the usage fields', () => {
   assert.equal(sampleCacheHitPct(null), null);
 });
 
+test('sampleCacheHitPct treats a null hitPct as unknown and falls back to usage', () => {
+  assert.equal(sampleCacheHitPct({ hitPct: null, inputTokens: 50, cacheReadTokens: 50 }), 50);
+  assert.equal(sampleCacheHitPct({ hitPct: null }), null);
+  assert.equal(sampleCacheHitPct({ hitPct: null, inputTokens: 0, cacheReadTokens: 0 }), null);
+  assert.equal(sampleCacheHitPct({ hitPct: undefined, inputTokens: 100, cacheReadTokens: 900 }), 90);
+  // A measured 0% is a real value and must not fall back to token usage.
+  assert.equal(sampleCacheHitPct({ hitPct: 0, inputTokens: 100, cacheReadTokens: 900 }), 0);
+});
+
 test('isFullPrefill only credits a large, cold prompt', () => {
   const config = normalizeConfig({});
   assert.equal(isFullPrefill({ inputTokens: 80000, cacheReadTokens: 0 }, config), true);
@@ -201,6 +211,10 @@ test('predictCacheHit does not rotate on missing data', () => {
   assert.equal(unknown.cold, false);
   assert.equal(unknown.expectedPct, null);
   assert.equal(unknown.basis, 'no-cache-data');
+  const nullHit = predictCacheHit({ samples: [{ ttftMs: 1, tps: 1, hitPct: null }], config });
+  assert.equal(nullHit.cold, false);
+  assert.equal(nullHit.expectedPct, null);
+  assert.equal(nullHit.basis, 'no-cache-data');
 });
 
 test('predictCacheHit treats a long idle gap as an expired cache', () => {
@@ -345,4 +359,10 @@ test('newRoutingId has the requested shape', () => {
   assert.match(id, /^ses_[0-9a-f]{24}$/);
   assert.notEqual(id, newRoutingId('ses_'));
   assert.equal(DEFAULTS.cacheHitThresholdPct, 25);
+});
+
+test('VERSION tracks package.json instead of being hand-maintained', () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.match(pkg.version, /^\d+\.\d+\.\d+/);
+  assert.equal(VERSION, pkg.version);
 });
