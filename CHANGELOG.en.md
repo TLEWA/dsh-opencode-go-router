@@ -8,6 +8,7 @@ All notable changes to this project are documented here. Versioning follows
 - An unknown cache-hit rate is no longer treated as 0%: a sample's hit rate is used only when it is actually present (a measured 0% still counts as 0%), otherwise it falls back to token usage. The request list and statistics skip unknown values too, so "not measurable" is not shown as 0% or averaged in as a miss.
 - The first request after a restart restores the previous request time from persisted routes and samples: after an overnight or long idle gap the cache TTL expires and rotation happens as usual, instead of assuming the cache is still warm.
 - Shutdown waits for `state.json` to reach disk before tearing down: dispose returns a Promise the host can await, and a failed flush is retried once inline, reducing the chance of losing the last request or rotation record.
+- The runtime version is now read from `package.json`: the hand-maintained `VERSION` in `lib/core.js` was stuck at 0.6.1, so 0.7.0 reported a stale version in the status endpoint, the settings header and rotation history; those places now follow the released version.
 - Docs: the cross-repo index now describes `dsh-utf8-output` as `GBK/CP936/GB18030` (previously CP932 by mistake).
 
 ## [0.7.0] - 2026-11-11

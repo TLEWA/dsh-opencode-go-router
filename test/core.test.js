@@ -26,6 +26,7 @@ import {
   summarizeSamples,
   systemPromptFingerprint,
   systemPromptText,
+  VERSION,
 } from '../lib/core.js';
 
 test('normalizeConfig applies defaults and clamps', () => {
@@ -358,4 +359,10 @@ test('newRoutingId has the requested shape', () => {
   assert.match(id, /^ses_[0-9a-f]{24}$/);
   assert.notEqual(id, newRoutingId('ses_'));
   assert.equal(DEFAULTS.cacheHitThresholdPct, 25);
+});
+
+test('VERSION tracks package.json instead of being hand-maintained', () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.match(pkg.version, /^\d+\.\d+\.\d+/);
+  assert.equal(VERSION, pkg.version);
 });
