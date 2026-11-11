@@ -3,7 +3,7 @@ name: ci
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize]
   push:
     branches: [main]
 
@@ -18,3 +18,5 @@ concurrency:
 jobs:
   ci:
     uses: TLEWA/dsh-plugin-ci/.github/workflows/reusable-ci.yml@v1
+    with:
+      separate-guard: true
