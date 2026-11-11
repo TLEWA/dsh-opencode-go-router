@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. Versioning follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.7.1] - 2026-11-11
 
 - An unknown cache-hit rate is no longer treated as 0%: a sample's hit rate is used only when it is actually present (a measured 0% still counts as 0%), otherwise it falls back to token usage. The request list and statistics skip unknown values too, so "not measurable" is not shown as 0% or averaged in as a miss.
 - The first request after a restart restores the previous request time from persisted routes and samples: after an overnight or long idle gap the cache TTL expires and rotation happens as usual, instead of assuming the cache is still warm.
