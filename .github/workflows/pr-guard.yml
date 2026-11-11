@@ -1,0 +1,24 @@
+name: pr-guard
+
+# guard 只读 PR 元数据（标签、描述）与 diff，不跑构建，因此单独成一个工作流：
+# 加标签或改描述只需要重跑这一个 job，不必把六格 verify 矩阵再跑一遍。
+# 触发器只有 opened / synchronize：同一 SHA 上的 check 结果挂在 commit 上，
+# reopened / ready_for_review / edited / labeled 不新建 run（新 run 会在同一 SHA
+# 留下第二套 check suite，ruleset 会判 BLOCKED）；元数据变化由 ci-rerun.yml 重跑本 run。
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-guard:
+    uses: TLEWA/dsh-plugin-ci/.github/workflows/reusable-pr-guard.yml@v1
+
