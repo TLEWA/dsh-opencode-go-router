@@ -203,6 +203,7 @@ Prompt-cache routing is only one corner of DSH. These are the other plugins I ma
 - **[dsh-utf8-output](https://github.com/TLEWA/dsh-utf8-output)** — fixes GBK/CP936/GB18030 mojibake from DSH subprocess output on Windows.
 - **[dsh-fastload](https://github.com/TLEWA/dsh-fastload)** — trims the first history page of long sessions while preserving the tail the user actually sees.
 - **[dsh-ptc-noargs](https://github.com/TLEWA/dsh-ptc-noargs)** — fixes rejected argument-less tool calls in PTC `run_code` by normalizing an omitted or `undefined` first argument to `{}`.
+- **[dsh-ps51-guard](https://github.com/TLEWA/dsh-ps51-guard)** — a guard for Windows PowerShell 5.1 calls made through `ops_bash`: UTF-16LE transfer protection, compatibility rewrites and result normalization (scaffolding).
 
 ## License
 

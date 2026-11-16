@@ -203,6 +203,7 @@ node --test
 - **[dsh-utf8-output](https://github.com/TLEWA/dsh-utf8-output)** —— 修复 Windows 下 DSH 子进程 GBK/CP936/GB18030 输出乱码。
 - **[dsh-fastload](https://github.com/TLEWA/dsh-fastload)** —— 长会话首屏历史瘦身：缩小首次打开时的历史页，同时保留用户实际看到的尾部内容。
 - **[dsh-ptc-noargs](https://github.com/TLEWA/dsh-ptc-noargs)** —— 修复 PTC `run_code` 中无参工具调用被拒绝的问题：把省略或 `undefined` 的首参归一化为 `{}`。
+- **[dsh-ps51-guard](https://github.com/TLEWA/dsh-ps51-guard)** —— 通过 `ops_bash` 调用的 Windows PowerShell 5.1 护栏：UTF-16LE 传输保护、兼容改写与执行结果归一化（脚手架阶段）。
 
 ## 许可证
 
