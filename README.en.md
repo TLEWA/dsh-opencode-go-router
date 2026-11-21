@@ -204,6 +204,7 @@ Prompt-cache routing is only one corner of DSH. These are the other plugins I ma
 - **[dsh-fastload](https://github.com/TLEWA/dsh-fastload)** — trims the first history page of long sessions while preserving the tail the user actually sees.
 - **[dsh-ptc-noargs](https://github.com/TLEWA/dsh-ptc-noargs)** — fixes rejected argument-less tool calls in PTC `run_code` by normalizing an omitted or `undefined` first argument to `{}`.
 - **[dsh-ps51-guard](https://github.com/TLEWA/dsh-ps51-guard)** — a guard for Windows PowerShell 5.1 calls made through `ops_bash`: UTF-16LE transfer protection, compatibility rewrites and result normalization (scaffolding).
+- **[dsh-image-formats](https://github.com/TLEWA/dsh-image-formats)** — AVIF/TIFF/SVG support for `read_image` and the composer: converts to PNG before using the existing attachment path.
 
 ## License
 
